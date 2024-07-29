@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta, time
 from unidecode import unidecode
 from dotenv import load_dotenv
@@ -190,6 +191,7 @@ class Newcomers():
         df_newcomers = self.clean_newcomers_excel_data(drive_id=drive_id, item_id=item_id, headers=headers, sheet=sheet)
         df_newcomers_cleaned = df_newcomers.dropna(subset=['address'])
         df_newcomers_cleaned = df_newcomers_cleaned.dropna(subset=['employeeID'])
+        df_newcomers_cleaned.drop(df_newcomers_cleaned[df_newcomers_cleaned['umowa'] != "podpisana"].index, inplace = True)
         for index, row in df_newcomers_cleaned.iterrows():
             start_date = row['start date'] 
             if start_date - timedelta(days=4) <= current_date <= start_date and start_date.weekday() in [0, 1, 5, 6]:  # Poniedzialek, Wrotek, Sobota, Niedziela (days = 4)
@@ -197,7 +199,6 @@ class Newcomers():
             elif start_date - timedelta(days=3) <= current_date <= start_date and start_date.weekday() in [2, 3, 4]:  # Sroda, Czwartek, Piatek (days = 2)
                 self.indexes.append(int(index))
         couple_days_away = df_newcomers.loc[self.indexes]
-        couple_days_away['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'] = couple_days_away['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'].astype(str)
         df = couple_days_away['address'].values.tolist()
         for address in df:
             validate = self.validate_address(self.key,address)
@@ -205,12 +206,15 @@ class Newcomers():
         couple_days_away['address'] = self.valid_addresses
         couple_days_away['phone'] = couple_days_away['phone'].astype(str).str.replace(" ", "") 
         couple_days_away['employeeID'] = couple_days_away['employeeID'].astype(int)
-        self.equpiment_data = couple_days_away[['employeeID','name', 'start date', 'laptop', 'telefon sluzbowy']]
+        couple_days_away['laptop'] = couple_days_away['laptop'].replace(np.nan, "standard win" ,regex = True)
+        couple_days_away['telefon sluzbowy'] = couple_days_away['telefon sluzbowy'].replace(np.nan, " " ,regex = True)
+        couple_days_away['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'] = couple_days_away['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'].replace(np.nan, " " ,regex = True)
+        self.equpiment_data = couple_days_away[['employeeID','name', 'start date', 'laptop', 'telefon sluzbowy', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
         if not couple_days_away['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'].str.strip().str.lower().eq("osobiście odbiór".strip().lower()).any():
-            self.office = couple_days_away[['name', 'address', 'phone',]]
+            self.office = couple_days_away[['employeeID','name', 'address', 'phone']]
             self.mails = couple_days_away[['e-mail before start']]
         else:
-            self.self_pickup = couple_days_away[['name', 'address', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
+            self.self_pickup = couple_days_away[['employeeID','name', 'address','phone','Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
         return couple_days_away
 
     def get_equipment_data(self):
@@ -338,7 +342,24 @@ class MailSender():
             raise Exception(response.text)
         response.text
         print("Mail was Send to - {} ".format(employee_full_name))
+    
+class NewcomersManager():
+    def __init__(self, drive_id, item_id, headers, sheet):
+        self.newcomers = Newcomers()
+        self.excel_data = self.newcomers.calculate_days_to_start(drive_id, item_id, headers, sheet)
         
+    def get_excel_data(self):
+        return self.excel_data
+    
+    def get_shipment_data(self):
+            return self.newcomers.get_courier_shippment()
+
+    def get_office_pickup_data(self):
+        return self.newcomers.get_office_pickup_list()
+
+    def get_equipment_data(self):
+        return self.newcomers.get_equipment_data()
+    
 def process_string(s):
     s = unidecode(s)
     s = s.strip()
@@ -358,31 +379,14 @@ def get_sulu_data(application_id, headers,employee_id):
     data = sulu_data.get_sulu_data(employee_id)
     return data
 
-def get_newcomers_instance():
-    return Newcomers()
+def get_newcomers_data(drive_id, item_id, headers, sheet):
+    menager = NewcomersManager(drive_id, item_id, headers, sheet)
+    newcomers_excel_data = menager.get_excel_data()
+    shipment_data = menager.get_shipment_data()
+    office_pickup = menager.get_office_pickup_data()
+    equipment_data = menager.get_equipment_data()
+    return newcomers_excel_data, shipment_data, office_pickup , equipment_data
 
-def get_newcomers_excel_data(drive_id, item_id, headers, sheet):
-    newcomers = get_newcomers_instance()
-    data = newcomers.calculate_days_to_start(drive_id, item_id, headers, sheet)
-    return data
-
-def get_newcomer_shippment_data(drive_id, item_id, headers, sheet):
-    newcomers = get_newcomers_instance()
-    newcomers.calculate_days_to_start(drive_id, item_id, headers, sheet)
-    shippment_data = newcomers.get_courier_shippment()
-    return shippment_data
-
-def get_office_pickup_data(drive_id, item_id, headers, sheet):
-    newcomers = get_newcomers_instance()
-    newcomers.calculate_days_to_start(drive_id, item_id, headers, sheet)
-    office_pickup_data = newcomers.get_office_pickup_list()
-    return office_pickup_data
-
-def get_newcomer_equipment_data(drive_id, item_id, headers, sheet):
-    newcomers = get_newcomers_instance()
-    newcomers.calculate_days_to_start(drive_id, item_id, headers, sheet)
-    equipment_data = newcomers.get_equipment_data()
-    return equipment_data
 
 def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data):
     employee_data_for_sharepoint_email_tracking_list = set()
@@ -445,17 +449,16 @@ def add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, header
                     "ExpirationDate": end_date,
             }
         }
-        print(f"\n {json.dumps(payload)} \n")
         response = requests.post(url, headers=headers, json=payload)
-        print(response.status_code)
         if response.status_code != 201:
             raise Exception(response.json())
-        mail_sender.send_welcome_mail_to_newcomer(employee_name, start_date, employee_one_password, employee_personal_mail)
+        mail_sender.send_welcome_mail_to_newcomer(employee_name, start_date, employee_one_password, "cichy18711@gmail.com")
     content = f"Hi,<br>Please order a courier and prepare a delivery note for:<br>{shippment_data.to_html(index=False)}<br> Automatically generated email, addresse's was validated using google  address validate api."
-    mail_sender.send_mail("office@lingarogroup.com", "Ordering a shipment courier", content, "2137", headers)
+    mail_sender.send_mail("offce@lingarogroup.com", "Ordering a shipment courier", content, "2137", headers)
     if office_pick_up:
-        mail_sender.send_mail("maciej.cichocki@lingarogroup.com", "Office self pickl up", office_pick_up.to_html(index=False), "2137", headers)
-    mail_sender.send_mail("dominik.boras@lingarogroup.com", "EQUIPMENT DATA", equipment_data.to_html(index=False), "2137", headers)
+        mail_sender.send_mail("cichy18711@gmail.com", "SELF PICKUP", office_pick_up.to_html(index=False), "2137", headers)
+    mail_sender.send_mail("cichy18711@gmail.com", "EQUIPMENT DATA", equipment_data.to_html(index=False), "2137", headers)
+    
 
 def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, headers, mail_sender, shippment_data, office_pick_up, equipment_data):
     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists/{email_tracking_list_id}/items?expand=fields"
@@ -463,6 +466,7 @@ def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, hea
     if response.status_code != 200:
         raise Exception(response.json())
     result = response.json()
+
     employee_details_to_add = []
     for employee in employee_data:
         current_date = datetime.now()
@@ -485,12 +489,9 @@ def main(delegated_headers, application_headers, application_id, drive_id, item_
     mail_sender = get_mail_sender_instance()
     sharepoint_data = get_sharepoint_data(delegated_headers, site_id, newbies_credentials_list_id)
     sulu_data = SuluData(application_id, application_headers)
-    newcomers_excel_data = get_newcomers_excel_data(drive_id, item_id, delegated_headers, sheet)
+    newcomers_excel_data, shippment_data,office_pickup_data, equipment_data = get_newcomers_data(drive_id, item_id, delegated_headers, sheet)
     employee_data = process_employee_data(sulu_data, newcomers_excel_data,sharepoint_data)
-    shippment_data = get_newcomer_shippment_data(drive_id, item_id, delegated_headers, sheet)
-    office_pick_up = get_office_pickup_data(drive_id, item_id, delegated_headers, sheet)
-    equipment_data = get_newcomer_equipment_data(drive_id, item_id, delegated_headers, sheet)
-    check_email_tracker_list(employee_data,site_id,email_tracking_list_id,delegated_headers, mail_sender, shippment_data, office_pick_up, equipment_data)
+    check_email_tracker_list(employee_data,site_id,email_tracking_list_id,delegated_headers, mail_sender, shippment_data, office_pickup_data, equipment_data)
 
 if __name__ == "__main__":
     load_dotenv("/Users/maciejcichocki/Documents/GitHub/newcomers_process_automation/Newcomers-Automation-Process/token.env")
