@@ -183,6 +183,7 @@ class Newcomers():
         data = ['employeeID', 'name', 'address', 'phone', 'start date', 'e-mail before start', 'laptop','telefon sluzbowy', 'umowa', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']
         filt = (~df_newcomers['address'].str.contains("Mexico|MEXICO|México", na=False))
         df_newcomers = df_newcomers.loc[filt, data]
+        df_newcomers = df_newcomers.dropna(subset = ['name'])
         df_newcomers['name'] = df_newcomers['name'].apply(unidecode).str.strip().str.lower()
         return df_newcomers
 
@@ -218,6 +219,7 @@ class Newcomers():
         return couple_days_away
 
     def get_equipment_data(self):
+        self.equpiment_data.loc[:, 'start date'] = self.equpiment_data['start date'].apply(lambda x: x.strftime("%Y-%m-%d"))
         return self.equpiment_data
     
     def get_employee_personal_mail(self):
@@ -388,22 +390,23 @@ def get_newcomers_data(drive_id, item_id, headers, sheet):
     return newcomers_excel_data, shipment_data, office_pickup , equipment_data
 
 
-def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data):
+def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data, mail_sender, headers):
     employee_data_for_sharepoint_email_tracking_list = set()
+    employes_from_ltl = set()
     for index,row in newcomers_excel_data.iterrows():
         excel_employee_id = row["employeeID"]
         excel_employee_name = row["name"]
         excel_employee_start_date = row["start date"]
         try:
             sulu_employee_data = sulu_data.get_sulu_data(excel_employee_id)
-            sulu_employee_name = sulu_employee_data["displayName"]
+            sulu_employee_name = sulu_employee_data['displayName']
             if excel_employee_name == process_string(sulu_employee_name):
                 sulu_employee_id = sulu_employee_data["id"]
                 excel_employee_start_date = str(row["start date"])
                 excel_employee_personal_mail = row["e-mail before start"]
                 sharepoint_found = False
                 for sharepoint in sharepoint_data:
-                    if sharepoint[0] == excel_employee_id:
+                    if int(sharepoint[0]) == excel_employee_id:
                         employee_data_for_sharepoint_email_tracking_list.add((
                             sulu_employee_id,
                             sulu_employee_name,
@@ -423,8 +426,17 @@ def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data):
                         excel_employee_personal_mail,
                         "https://share.1password.com/s#rcAv4wgslR3cUc--7JFCR935dD-veFGcrF7pXpxoRXc"
                     ))
+                    employes_from_ltl.add((
+                        sulu_employee_id,
+                        sulu_employee_name,
+                        excel_employee_start_date
+                    ))
+ 
         except AttributeError as e:
             print(f"Attribute Error {e}")
+        if employes_from_ltl:
+            content = f"Employee password must be reset to - L1n99aROrba22 <br> {employes_from_ltl}"
+            mail_sender.send_mail("dominik.boras@lingarogroup.com", "Long Term Leavers",content , "2137", headers)
     return employee_data_for_sharepoint_email_tracking_list # employee_data
 
 def add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_data, mail_sender, shippment_data, office_pick_up, equipment_data):
@@ -452,16 +464,17 @@ def add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, header
         response = requests.post(url, headers=headers, json=payload)
         if response.status_code != 201:
             raise Exception(response.json())
-        mail_sender.send_welcome_mail_to_newcomer(employee_name, start_date, employee_one_password, "cichy18711@gmail.com")
+        mail_sender.send_welcome_mail_to_newcomer(employee_name, start_date, employee_one_password, employee_personal_mail)
+     
+    shippment_data = shippment_data[['name','address','phone']]
+    equipment_data = equipment_data[['name', 'start date', 'laptop', 'telefon sluzbowy', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
     content = f"Hi,<br>Please order a courier and prepare a delivery note for:<br>{shippment_data.to_html(index=False)}<br> Automatically generated email, addresse's was validated using google  address validate api."
     mail_sender.send_mail("offce@lingarogroup.com", "Ordering a shipment courier", content, "2137", headers)
     if office_pick_up:
+        office_pick_up = office_pick_up[['name', 'address','phone','Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
         mail_sender.send_mail("cichy18711@gmail.com", "SELF PICKUP", office_pick_up.to_html(index=False), "2137", headers)
     mail_sender.send_mail("cichy18711@gmail.com", "EQUIPMENT DATA", equipment_data.to_html(index=False), "2137", headers)
-  
-def filter_data(df, df_col,value):
-    df = df.drop(df[df[df_col] == value].index)
-    return df
+
 
 def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, headers, mail_sender, shippment_data, office_pick_up, equipment_data):
     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists/{email_tracking_list_id}/items?expand=fields"
@@ -480,50 +493,24 @@ def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, hea
                 fields = data["fields"]
                 list_employee_id = fields['EmployeeId']
                 if employee_id == list_employee_id:
-                    already_on_list = True
-                    shippment_data = shippment_data.drop(shippment_data[shippment_data['employeeID'] == employee_id].index)
-                    filtered_office_pickup_data = filter_data(office_pick_up,"employeeID", employee_id)
-                    break
-            if not already_on_list:
-                employee_details_to_add.append(employee)
-    # if employee_details_to_add:
-    #     add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_details_to_add, mail_sender, shippment_data, office_pick_up, equipment_data)
-    print(shippment_data)
-    
-    return shippment_data, office_pick_up, equipment_data
-
-# Pozostała część kodu   
-
-def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, headers, mail_sender, shippment_data, office_pick_up, equipment_data):
-    url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists/{email_tracking_list_id}/items?expand=fields"
-    response = requests.get(url=url, headers=headers)
-    if response.status_code != 200:
-        raise Exception(response.json())
-    result = response.json()
-    employee_details_to_add = []
-    for employee in employee_data:
-        current_date = datetime.now()
-        employee_id = str(employee[2])
-        already_on_list = False
-        start_date = datetime.strptime(employee[3], "%Y-%m-%d %H:%M:%S")
-        if start_date - timedelta(days=4) <= current_date <= start_date:
-            for data in result["value"]:
-                fields = data["fields"]
-                list_employee_id = fields['EmployeeId']
-                if employee_id == list_employee_id:
+                    shippment_data = shippment_data.drop(shippment_data[shippment_data['employeeID'].astype(str) == employee_id].index)
+                    equipment_data = equipment_data.drop(equipment_data[equipment_data['employeeID'].astype(str) == employee_id].index)
                     already_on_list = True
                     break
             if not already_on_list:
-                employee_details_to_add.append(employee)
+                employee_details_to_add.append(employee) 
     if employee_details_to_add:
         add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_details_to_add, mail_sender, shippment_data, office_pick_up, equipment_data)
+        
+def automate_excel_sheet_by_datetime():
+    return 0
         
 def main(delegated_headers, application_headers, application_id, drive_id, item_id, sheet, site_id, email_tracking_list_id, newbies_credentials_list_id):
     mail_sender = get_mail_sender_instance()
     sharepoint_data = get_sharepoint_data(delegated_headers, site_id, newbies_credentials_list_id)
     sulu_data = SuluData(application_id, application_headers)
     newcomers_excel_data, shippment_data,office_pickup_data, equipment_data = get_newcomers_data(drive_id, item_id, delegated_headers, sheet)
-    employee_data = process_employee_data(sulu_data, newcomers_excel_data,sharepoint_data)
+    employee_data = process_employee_data(sulu_data, newcomers_excel_data,sharepoint_data, mail_sender, delegated_headers)
     check_email_tracker_list(employee_data,site_id,email_tracking_list_id,delegated_headers, mail_sender, shippment_data, office_pickup_data, equipment_data)
 
 if __name__ == "__main__":
