@@ -458,7 +458,10 @@ def add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, header
     if office_pick_up:
         mail_sender.send_mail("cichy18711@gmail.com", "SELF PICKUP", office_pick_up.to_html(index=False), "2137", headers)
     mail_sender.send_mail("cichy18711@gmail.com", "EQUIPMENT DATA", equipment_data.to_html(index=False), "2137", headers)
-    
+  
+def filter_data(df, df_col,value):
+    df = df.drop(df[df[df_col] == value].index)
+    return df
 
 def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, headers, mail_sender, shippment_data, office_pick_up, equipment_data):
     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists/{email_tracking_list_id}/items?expand=fields"
@@ -466,7 +469,37 @@ def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, hea
     if response.status_code != 200:
         raise Exception(response.json())
     result = response.json()
+    employee_details_to_add = []
+    for employee in employee_data:
+        current_date = datetime.now()
+        employee_id = str(employee[2])
+        already_on_list = False
+        start_date = datetime.strptime(employee[3], "%Y-%m-%d %H:%M:%S")
+        if start_date - timedelta(days=4) <= current_date <= start_date:
+            for data in result["value"]:
+                fields = data["fields"]
+                list_employee_id = fields['EmployeeId']
+                if employee_id == list_employee_id:
+                    already_on_list = True
+                    shippment_data = shippment_data.drop(shippment_data[shippment_data['employeeID'] == employee_id].index)
+                    filtered_office_pickup_data = filter_data(office_pick_up,"employeeID", employee_id)
+                    break
+            if not already_on_list:
+                employee_details_to_add.append(employee)
+    # if employee_details_to_add:
+    #     add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_details_to_add, mail_sender, shippment_data, office_pick_up, equipment_data)
+    print(shippment_data)
+    
+    return shippment_data, office_pick_up, equipment_data
 
+# Pozostała część kodu   
+
+def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, headers, mail_sender, shippment_data, office_pick_up, equipment_data):
+    url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists/{email_tracking_list_id}/items?expand=fields"
+    response = requests.get(url=url, headers=headers)
+    if response.status_code != 200:
+        raise Exception(response.json())
+    result = response.json()
     employee_details_to_add = []
     for employee in employee_data:
         current_date = datetime.now()
