@@ -10,71 +10,60 @@ import json
 import msal
 import webbrowser
 import base64
+import asyncio
+from azure.identity.aio import ClientSecretCredential
+from msgraph import GraphServiceClient
 
-class MsGraphAuthenticator():
-
-    def __init__(self, client_id, username, tenant_id, scope_delegated):
-        self.client_id = client_id
-        self.username = username
+class MsGraph:
+    def __init__(self, tenant_id, client_id, client_secret):
         self.tenant_id = tenant_id
-        self.scope_delegated = scope_delegated
- 
-    def generate_access_token_delegated(self):
-        authority_url = f"https://login.microsoftonline.com/{self.tenant_id}"
-        access_token_cache = msal.SerializableTokenCache()
-        if os.path.exists('/Users/maciejcichocki/Documents/GitHub/newcomers_process_automation/Newcomers-Automation-Process/access_token.json'):
-            with open('/Users/maciejcichocki/Documents/GitHub/newcomers_process_automation/Newcomers-Automation-Process/access_token.json', 'r') as token_file:
-                access_token_cache.deserialize(token_file.read())
-        client = msal.PublicClientApplication(
+        self.client_id = client_id
+        self.client_secret = client_secret
+            
+    async def generate_msgraph_token(self):
+        credential = ClientSecretCredential(
+            tenant_id=self.tenant_id,
             client_id=self.client_id,
-            authority=authority_url,
-            token_cache=access_token_cache
+            client_secret=self.client_secret
         )
-        accounts = client.get_accounts(username=self.username)
-        if accounts:
-            self.token_response_delegated = client.acquire_token_silent(self.scope_delegated, accounts[0])
-        else:
-            flow = client.initiate_device_flow(self.scope_delegated)
-            print('user code:\n ' + flow["user_code"])
-            webbrowser.open(flow['verification_uri'])
-            self.token_response_delegated = client.acquire_token_by_device_flow(flow=flow)
-            print(self.token_response_delegated)
-
-        with open('/Users/maciejcichocki/Documents/GitHub/newcomers_process_automation/Newcomers-Automation-Process/access_token.json', 'w') as token_file:
-            token_file.write(access_token_cache.serialize())
-        return self.token_response_delegated
-  
-    def get_delegated_headers(self):
-        token = self.generate_access_token_delegated()
-        access_token = token["access_token"]
+        scopes = ["https://graph.microsoft.com/.default"]
+        token = await credential.get_token(*scopes)
+        return token.token
+    
+    async def generate_msgraph_headers(self):
+        token = await self.generate_msgraph_token()
         headers = {
-            'Authorization': f'Bearer {access_token}',
-            'Content-Type' : 'application/json'
-        }
-        return headers
-
-    def generate_access_token_application(self, client_secret):
-        authority = f"https://login.microsoftonline.com/{self.tenant_id}"
-        app = msal.ConfidentialClientApplication(
-            self.client_id,
-            authority=authority,
-            client_credential=client_secret
-        )
-        scope = ["https://graph.microsoft.com/.default"]
-        self.access_token_application = app.acquire_token_for_client(scopes=scope)
-        if "access_token" in self.access_token_application:
-            return self.access_token_application["access_token"]
-        else:
-            raise Exception("Could not obtain access token")
-        
-    def get_application_headers(self, client_secret):
-        access_token = self.generate_access_token_application(client_secret)
-        headers = {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + access_token
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
         }
         return headers
         
+async def MsGrapgSDKMenager(tenant_id, client_id, client_secret):
+    sdk = MsGraph(tenant_id, client_id, client_secret)
+    headers = await sdk.generate_msgraph_headers()
+    return headers
+
+async def get_user(tenant_id, client_id, client_secret, user_id):
+    headers = await MsGrapgSDKMenager(tenant_id, client_id, client_secret)
+    endpoint = f'https://graph.microsoft.com/v1.0/users/{user_id}'
+    response = requests.get(endpoint, headers=headers)
+
+    if response.status_code == 200:
+        user = response.json()
+        print(user)
+    else:
+        print(f'Error: {response.status_code}, {response.text}')
+
+async def msgraph_main(tenant_id, client_id, client_secret, user_id):
+    await get_user(tenant_id, client_id, client_secret, user_id)
+    
+# class JiraAutomation():
+#     def __init__(self,api_token):
+#         self.api_token = api_token
+    
+#     def headers(self):
+        
+
 class SharepointData():
 
     def __init__(self, headers):
@@ -162,6 +151,7 @@ class Newcomers():
         return formatted_address
     
     
+    
     def get_excel_file_from_sharepoint(self, drive_id, item_id, headers, sheet):
         endpoint = 'https://graph.microsoft.com/v1.0'
         response = requests.get(
@@ -195,7 +185,7 @@ class Newcomers():
         df_newcomers_cleaned.drop(df_newcomers_cleaned[df_newcomers_cleaned['umowa'] != "podpisana"].index, inplace = True)
         for index, row in df_newcomers_cleaned.iterrows():
             start_date = row['start date'] 
-            if start_date - timedelta(days=4) <= current_date <= start_date and start_date.weekday() in [0, 1, 5, 6]:  # Poniedzialek, Wrotek, Sobota, Niedziela (days = 4)
+            if start_date - timedelta(days=5) <= current_date <= start_date and start_date.weekday() in [0, 1, 5, 6]:  # Poniedzialek, Wrotek, Sobota, Niedziela (days = 4)
                 self.indexes.append(int(index))
             elif start_date - timedelta(days=3) <= current_date <= start_date and start_date.weekday() in [2, 3, 4]:  # Sroda, Czwartek, Piatek (days = 2)
                 self.indexes.append(int(index))
@@ -280,9 +270,9 @@ class MailSender():
                 requests_body['message']['attachments'].append(attachment)
         return requests_body
         
-    def send_mail(self,address, subject, content, attachment, headers):
+    def send_mail(self,user_id,address, subject, content, attachment, headers):
         GRAPH_ENDPOINT = 'https://graph.microsoft.com/v1.0'
-        endpoint = GRAPH_ENDPOINT + '/me/sendMail'
+        endpoint = GRAPH_ENDPOINT + f"/users/{user_id}/sendMail"
         mail = self.mail_body(address, subject, content, attachment)
         response = requests.post(endpoint, headers=headers, json=mail)
         if response.status_code != 202:
@@ -399,6 +389,7 @@ def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data, mail_
         excel_employee_start_date = row["start date"]
         try:
             sulu_employee_data = sulu_data.get_sulu_data(excel_employee_id)
+            print(sulu_employee_data)
             sulu_employee_name = sulu_employee_data['displayName']
             if excel_employee_name == process_string(sulu_employee_name):
                 sulu_employee_id = sulu_employee_data["id"]
@@ -469,7 +460,7 @@ def add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, header
     shippment_data = shippment_data[['name','address','phone']]
     equipment_data = equipment_data[['name', 'start date', 'laptop', 'telefon sluzbowy', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
     content = f"Hi,<br>Please order a courier and prepare a delivery note for:<br>{shippment_data.to_html(index=False)}<br> Automatically generated email, addresse's was validated using google  address validate api."
-    mail_sender.send_mail("offce@lingarogroup.com", "Ordering a shipment courier", content, "2137", headers)
+    mail_sender.send_mail("maciej.cichocki@lingarogroup.com","offce@lingarogroup.com", "Ordering a shipment courier", content, "2137", headers)
     if office_pick_up:
         office_pick_up = office_pick_up[['name', 'address','phone','Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
         mail_sender.send_mail("cichy18711@gmail.com", "SELF PICKUP", office_pick_up.to_html(index=False), "2137", headers)
@@ -502,49 +493,52 @@ def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, hea
     if employee_details_to_add:
         add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_details_to_add, mail_sender, shippment_data, office_pick_up, equipment_data)
         
-def automate_excel_sheet_by_datetime():
-    return 0
+# def excel_sheet_fliper(excel_data):
+#     """_summary_
+#     function will automatically switch on to 
+#     Args:
+#         excel_data (dict): json data from get request. 
+#     """
         
-def main(delegated_headers, application_headers, application_id, drive_id, item_id, sheet, site_id, email_tracking_list_id, newbies_credentials_list_id):
+def main(application_headers, application_id, drive_id, item_id, sheet, site_id, email_tracking_list_id, newbies_credentials_list_id, user_id):
     mail_sender = get_mail_sender_instance()
-    sharepoint_data = get_sharepoint_data(delegated_headers, site_id, newbies_credentials_list_id)
+    sharepoint_data = get_sharepoint_data(application_headers, site_id, newbies_credentials_list_id)
     sulu_data = SuluData(application_id, application_headers)
-    newcomers_excel_data, shippment_data,office_pickup_data, equipment_data = get_newcomers_data(drive_id, item_id, delegated_headers, sheet)
-    employee_data = process_employee_data(sulu_data, newcomers_excel_data,sharepoint_data, mail_sender, delegated_headers)
-    check_email_tracker_list(employee_data,site_id,email_tracking_list_id,delegated_headers, mail_sender, shippment_data, office_pickup_data, equipment_data)
+    newcomers_excel_data, shippment_data,office_pickup_data, equipment_data = get_newcomers_data(drive_id, item_id, application_headers, sheet)
+    employee_data = process_employee_data(sulu_data, newcomers_excel_data,sharepoint_data, mail_sender, application_headers)
+    print(newcomers_excel_data)
+    # check_email_tracker_list(employee_data,site_id,email_tracking_list_id,application_headers, mail_sender, shippment_data, office_pickup_data, equipment_data, user_id)
+
+    
+    
 
 if __name__ == "__main__":
     load_dotenv("/Users/maciejcichocki/Documents/GitHub/newcomers_process_automation/Newcomers-Automation-Process/token.env")
     drive_id = os.getenv("DRIVE_ID")    #Sharepoint Data
     item_id = os.getenv("ITEM_ID")    #Sharepoint Data
-    tenant_id = os.getenv("TENANT_ID")    # AZURE APP ID'S
-    client_id = os.getenv("APP_ID")    # AZURE APP ID'S
-    client_secret = os.getenv("CLIENT_SECRET")    # AZURE APP ID'S
+    tenant_id = os.getenv("PYTHON_TENANT_ID")    # AZURE APP ID'S
+    client_id = os.getenv("PYTHON_CLIENT_ID")    # AZURE APP ID'S
+    client_secret = os.getenv("PYTHON_CLIENT_SECRET")    # AZURE APP ID'S
     application_id = os.getenv('APPLICATION_ID')    # AZURE APP ID'S
     username = os.getenv("USERNAME")    # AZURE APP ID'S
     site_id = os.getenv("SITE_ID")
     email_tracking_list_id = os.getenv("EMAIL_TRACKING_LIST_ID")
     send_grid_headers = os.getenv("SEND_GRID_CREDENTIALS")
     newbies_credentials_list_id = os.getenv("NEWBIES_CREDENTIALS_LIST_ID")# Newbies Credentials
-    delegated_scopes = [
-    "ChannelMessage.Read.All","ChannelMessage.ReadWrite","ChannelMessage.Send","Mail.Send","Sites.ReadWrite.All","User.Export.All","User.Read",
-    ]
+    
     mail_sender = MailSender()
-    auth = MsGraphAuthenticator(
-        client_id=client_id,username=username,tenant_id=tenant_id,scope_delegated=delegated_scopes
-    )
-    application_headers = auth.get_application_headers(client_secret)
-    delegated_headers = auth.get_delegated_headers()
+    user_id = "maciej.cichocki@lingarogroup.com"
+    headers = asyncio.run(MsGrapgSDKMenager(tenant_id=tenant_id, client_id=client_id, client_secret=client_secret))
     sheet_counter = 52    # dodanie funkcji automatycznego zmieniania sheet w excelu na podstawie daty 
     main(
-        delegated_headers=delegated_headers,
-        application_headers=application_headers,
+        application_headers=headers,
         application_id=application_id,
         drive_id=drive_id,
         item_id=item_id,
         sheet=sheet_counter,
         site_id=site_id,
         email_tracking_list_id=email_tracking_list_id,
-        newbies_credentials_list_id = newbies_credentials_list_id
+        newbies_credentials_list_id = newbies_credentials_list_id,
+        user_id = user_id
     )
     
