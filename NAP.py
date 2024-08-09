@@ -168,41 +168,44 @@ class Newcomers():
         
         # Print the names of the sheets
         sheet_names = excel_file.sheet_names
+        logger.debug(f"Method get_excel_file_from_sharepoint \n {sheet_names}")
         return sheet_names
 
     def create_dataframe(self, sheet):
+        logger.info(f"Method create_dataframe init.")
         df = pd.read_excel(self.file_content, sheet_name=sheet)
+        logger.debug(f"Raw DataFeame from create_datafeame method: {df.to_string()}")
         return df
         
     def clean_newcomers_excel_data(self, raw_dataframe):
-        print(f"\n-----------------   RAW DATA-----------------\n{raw_dataframe}\n")
+        logger.info(f"Method clean_newcomers_excel_data init.")
+        logger.info(raw_dataframe)
         df_newcomers = raw_dataframe
         data = ['employeeID', 'name', 'address', 'phone', 'start date', 'e-mail before start', 'laptop','telefon sluzbowy', 'umowa', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']
         filt = (~df_newcomers['address'].str.contains("Mexico|MEXICO|México", na=False))
         df_newcomers = df_newcomers.loc[filt, data]
         df_newcomers = df_newcomers.dropna(subset = ['name'])
         df_newcomers['name'] = df_newcomers['name'].apply(unidecode).str.strip().str.lower()
-        print(f"\n-----------------   CLEAN DATA    -----------------\n{df_newcomers}\n")
+        logger.debug(f"Cleaned DataFrame: \n {df_newcomers}")
         return df_newcomers
 
     def calculate_days_to_start(self, cleaned_dataframe):
+        logger.info(f"Method calculate_days_to_start init.")
         current_date = datetime.today()
+        logger.info(f"Current Date - {current_date}")
         df_newcomers = cleaned_dataframe
         test = current_date - timedelta(days=30)
-        print(f"\n-----------------   DATAFRAME NEWCOMERS    -----------------\n{df_newcomers}\n{current_date}\n{test}\n")
+        logger.debug(f"Date that will be consider by program - {test}")
         df_newcomers_cleaned = df_newcomers.dropna(subset=['address'])
-        print(f"\n1. {df_newcomers_cleaned}\n")
         df_newcomers_cleaned = df_newcomers_cleaned.dropna(subset=['employeeID'])
-        print(f"\n2. {df_newcomers_cleaned}\n")
         df_newcomers_cleaned.drop(df_newcomers_cleaned[df_newcomers_cleaned['umowa'] != "podpisana"].index, inplace = True)
-        print(f"\n3. {df_newcomers_cleaned}\n")
+        logger.info(f"DataFrame after dropna values: \n {df_newcomers_cleaned}")
         for index, row in df_newcomers_cleaned.iterrows():
             start_date = row['start date'] 
-            
-            print(f"\nLOOP___________ {row['name']}======={start_date} ======= {type(start_date)}\n")
+            logger.info(f"{row['name']} | {start_date} | {type(start_date)}")
             if not isinstance(start_date, datetime):
                 start_date = datetime.strptime(start_date, '%d.%m.%Y')
-
+                logger.warning(f"Wrong start date format was found in: \n {row}")
             if current_date <= start_date <= current_date + timedelta(days=25) and start_date.weekday() in [0, 1, 5, 6]:  # Poniedziałek, Wtorek, Sobota, Niedziela
                 self.indexes.append(int(index))  
             elif start_date - timedelta(days=23) <= current_date <= start_date and start_date.weekday() in [2, 3, 4]:  # Sroda, Czwartek, Piatek (days = 2)
@@ -397,18 +400,14 @@ def setup_logger():
                 "formatter": "detailed"
             }
         },
-        "loggers": {
-            "my_logger": {
-                "level": "DEBUG",
-                "handlers": ["console"]
-            }
-        },
         "root": {
-            "level": "WARNING",
+            "level": "DEBUG",
+            "handlers": ["console"]
         }
     }
-    logging.config.dictConfig(logging_config)
-    return logging.getLogger("my_logger")
+    my_logger = logging.config.dictConfig(logging_config)
+    logger = logging.getLogger(my_logger)  # create a logger with a custom name
+    return logger
 
         
       
