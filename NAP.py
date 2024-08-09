@@ -13,6 +13,7 @@ import base64
 import asyncio
 from azure.identity.aio import ClientSecretCredential
 from msgraph import GraphServiceClient
+from dateutil.relativedelta import relativedelta
 
 class MsGraph:
     def __init__(self, tenant_id, client_id, client_secret):
@@ -57,13 +58,6 @@ async def get_user(tenant_id, client_id, client_secret, user_id):
 async def msgraph_main(tenant_id, client_id, client_secret, user_id):
     await get_user(tenant_id, client_id, client_secret, user_id)
     
-# class JiraAutomation():
-#     def __init__(self,api_token):
-#         self.api_token = api_token
-    
-#     def headers(self):
-        
-
 class SharepointData():
 
     def __init__(self, headers):
@@ -150,9 +144,7 @@ class Newcomers():
         formatted_address = result['result']['address']['formattedAddress']  # address after validation
         return formatted_address
     
-    
-    
-    def get_excel_file_from_sharepoint(self, drive_id, item_id, headers, sheet):
+    def get_excel_file_from_sharepoint(self, drive_id, item_id, headers):
         endpoint = 'https://graph.microsoft.com/v1.0'
         response = requests.get(
             url=endpoint + f"/drives/{drive_id}/items/{item_id}",
@@ -164,30 +156,50 @@ class Newcomers():
         download_url = result['@microsoft.graph.downloadUrl']
         download_response = requests.get(url=download_url)
         download_response.raise_for_status()
-        file_content = BytesIO(download_response.content)
-        df = pd.read_excel(file_content, sheet_name=sheet)
-        return df
+        self.file_content = BytesIO(download_response.content)
+        # Load the Excel file
+        excel_file = pd.ExcelFile(self.file_content)
+        
+        # Print the names of the sheets
+        sheet_names = excel_file.sheet_names
+        return sheet_names
 
-    def clean_newcomers_excel_data(self, drive_id, item_id, headers, sheet):
-        df_newcomers = self.get_excel_file_from_sharepoint(drive_id=drive_id, item_id=item_id, headers=headers, sheet=sheet)
+    def create_dataframe(self, sheet):
+        df = pd.read_excel(self.file_content, sheet_name=sheet)
+        return df
+        
+    def clean_newcomers_excel_data(self, raw_dataframe):
+        print(f"\n-----------------   RAW DATA-----------------\n{raw_dataframe}\n")
+        df_newcomers = raw_dataframe
         data = ['employeeID', 'name', 'address', 'phone', 'start date', 'e-mail before start', 'laptop','telefon sluzbowy', 'umowa', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']
         filt = (~df_newcomers['address'].str.contains("Mexico|MEXICO|México", na=False))
         df_newcomers = df_newcomers.loc[filt, data]
         df_newcomers = df_newcomers.dropna(subset = ['name'])
         df_newcomers['name'] = df_newcomers['name'].apply(unidecode).str.strip().str.lower()
+        print(f"\n-----------------   CLEAN DATA    -----------------\n{df_newcomers}\n")
         return df_newcomers
 
-    def calculate_days_to_start(self, drive_id, item_id, headers, sheet):
+    def calculate_days_to_start(self, cleaned_dataframe):
         current_date = datetime.today()
-        df_newcomers = self.clean_newcomers_excel_data(drive_id=drive_id, item_id=item_id, headers=headers, sheet=sheet)
+        df_newcomers = cleaned_dataframe
+        test = current_date - timedelta(days=30)
+        print(f"\n-----------------   DATAFRAME NEWCOMERS    -----------------\n{df_newcomers}\n{current_date}\n{test}\n")
         df_newcomers_cleaned = df_newcomers.dropna(subset=['address'])
+        print(f"\n1. {df_newcomers_cleaned}\n")
         df_newcomers_cleaned = df_newcomers_cleaned.dropna(subset=['employeeID'])
+        print(f"\n2. {df_newcomers_cleaned}\n")
         df_newcomers_cleaned.drop(df_newcomers_cleaned[df_newcomers_cleaned['umowa'] != "podpisana"].index, inplace = True)
+        print(f"\n3. {df_newcomers_cleaned}\n")
         for index, row in df_newcomers_cleaned.iterrows():
             start_date = row['start date'] 
-            if start_date - timedelta(days=5) <= current_date <= start_date and start_date.weekday() in [0, 1, 5, 6]:  # Poniedzialek, Wrotek, Sobota, Niedziela (days = 4)
-                self.indexes.append(int(index))
-            elif start_date - timedelta(days=3) <= current_date <= start_date and start_date.weekday() in [2, 3, 4]:  # Sroda, Czwartek, Piatek (days = 2)
+            
+            print(f"\nLOOP___________ {row['name']}======={start_date} ======= {type(start_date)}\n")
+            if not isinstance(start_date, datetime):
+                start_date = datetime.strptime(start_date, '%d.%m.%Y')
+
+            if current_date <= start_date <= current_date + timedelta(days=25) and start_date.weekday() in [0, 1, 5, 6]:  # Poniedziałek, Wtorek, Sobota, Niedziela
+                self.indexes.append(int(index))  
+            elif start_date - timedelta(days=23) <= current_date <= start_date and start_date.weekday() in [2, 3, 4]:  # Sroda, Czwartek, Piatek (days = 2)
                 self.indexes.append(int(index))
         couple_days_away = df_newcomers.loc[self.indexes]
         df = couple_days_away['address'].values.tolist()
@@ -209,7 +221,6 @@ class Newcomers():
         return couple_days_away
 
     def get_equipment_data(self):
-        self.equpiment_data.loc[:, 'start date'] = self.equpiment_data['start date'].apply(lambda x: x.strftime("%Y-%m-%d"))
         return self.equpiment_data
     
     def get_employee_personal_mail(self):
@@ -338,20 +349,23 @@ class MailSender():
 class NewcomersManager():
     def __init__(self, drive_id, item_id, headers, sheet):
         self.newcomers = Newcomers()
-        self.excel_data = self.newcomers.calculate_days_to_start(drive_id, item_id, headers, sheet)
-        
+        self.excel_sheets_list = self.newcomers.get_excel_file_from_sharepoint(drive_id, item_id, headers) 
+        self.raw_dataframe = self.newcomers.create_dataframe(sheet)
+        self.clean_dataframe = self.newcomers.clean_newcomers_excel_data(raw_dataframe=self.raw_dataframe)
+        self.processed_dataframe = self.newcomers.calculate_days_to_start(cleaned_dataframe=self.clean_dataframe)
+    
     def get_excel_data(self):
-        return self.excel_data
+        return self.processed_dataframe
     
     def get_shipment_data(self):
-            return self.newcomers.get_courier_shippment()
+        return self.newcomers.get_courier_shippment()
 
     def get_office_pickup_data(self):
         return self.newcomers.get_office_pickup_list()
 
     def get_equipment_data(self):
         return self.newcomers.get_equipment_data()
-    
+      
 def process_string(s):
     s = unidecode(s)
     s = s.strip()
@@ -371,7 +385,29 @@ def get_sulu_data(application_id, headers,employee_id):
     data = sulu_data.get_sulu_data(employee_id)
     return data
 
-def get_newcomers_data(drive_id, item_id, headers, sheet):
+def get_excel_sheet(drive_id, item_id, headers):
+        newcomers = Newcomers()
+        sheet_list = newcomers.get_excel_file_from_sharepoint(drive_id, item_id, headers)
+        month_list = []
+        current_date = datetime.now()
+        current_date = datetime.strftime(current_date, "%B %Y").lower().strip()
+        sheet_uniform = []
+        for sheet in sheet_list:
+            sheet_uniform.append(sheet.lower().strip())
+        next_month = datetime.now() + relativedelta(months=1)
+        next_month = next_month.replace(day=1)
+        next_month = datetime.strftime(next_month, "%B %Y").lower().strip()
+        time_period = datetime.now() + timedelta(days=25)
+        time_period = datetime.strftime(time_period, "%B %Y").lower().strip()
+        if time_period >= next_month: 
+            month_list.append(current_date)
+            month_list.append(next_month)
+        else:
+            month_list.append(current_date)
+            
+        return month_list, sheet_uniform
+    
+def get_newcomers_data(drive_id, item_id, headers, sheet): 
     menager = NewcomersManager(drive_id, item_id, headers, sheet)
     newcomers_excel_data = menager.get_excel_data()
     shipment_data = menager.get_shipment_data()
@@ -379,8 +415,7 @@ def get_newcomers_data(drive_id, item_id, headers, sheet):
     equipment_data = menager.get_equipment_data()
     return newcomers_excel_data, shipment_data, office_pickup , equipment_data
 
-
-def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data, mail_sender, headers):
+def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data, mail_sender, headers, user_id):
     employee_data_for_sharepoint_email_tracking_list = set()
     employes_from_ltl = set()
     for index,row in newcomers_excel_data.iterrows():
@@ -389,7 +424,6 @@ def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data, mail_
         excel_employee_start_date = row["start date"]
         try:
             sulu_employee_data = sulu_data.get_sulu_data(excel_employee_id)
-            print(sulu_employee_data)
             sulu_employee_name = sulu_employee_data['displayName']
             if excel_employee_name == process_string(sulu_employee_name):
                 sulu_employee_id = sulu_employee_data["id"]
@@ -418,16 +452,17 @@ def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data, mail_
                         "https://share.1password.com/s#rcAv4wgslR3cUc--7JFCR935dD-veFGcrF7pXpxoRXc"
                     ))
                     employes_from_ltl.add((
-                        sulu_employee_id,
+                        excel_employee_id,
                         sulu_employee_name,
                         excel_employee_start_date
                     ))
  
         except AttributeError as e:
             print(f"Attribute Error {e}")
-        if employes_from_ltl:
-            content = f"Employee password must be reset to - L1n99aROrba22 <br> {employes_from_ltl}"
-            mail_sender.send_mail("dominik.boras@lingarogroup.com", "Long Term Leavers",content , "2137", headers)
+    if employes_from_ltl:
+        content = f"Employee password must be reset to - L1n99aROrba22 <br> {employes_from_ltl}"
+        mail_sender.send_mail(user_id,"dominik.boras@lingarogroup.com", "Long Term Leavers", content, "2137", headers)
+    print(employes_from_ltl)
     return employee_data_for_sharepoint_email_tracking_list # employee_data
 
 def add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_data, mail_sender, shippment_data, office_pick_up, equipment_data):
@@ -493,23 +528,19 @@ def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, hea
     if employee_details_to_add:
         add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_details_to_add, mail_sender, shippment_data, office_pick_up, equipment_data)
         
-# def excel_sheet_fliper(excel_data):
-#     """_summary_
-#     function will automatically switch on to 
-#     Args:
-#         excel_data (dict): json data from get request. 
-#     """
         
-def main(application_headers, application_id, drive_id, item_id, sheet, site_id, email_tracking_list_id, newbies_credentials_list_id, user_id):
-    mail_sender = get_mail_sender_instance()
-    sharepoint_data = get_sharepoint_data(application_headers, site_id, newbies_credentials_list_id)
-    sulu_data = SuluData(application_id, application_headers)
-    newcomers_excel_data, shippment_data,office_pickup_data, equipment_data = get_newcomers_data(drive_id, item_id, application_headers, sheet)
-    employee_data = process_employee_data(sulu_data, newcomers_excel_data,sharepoint_data, mail_sender, application_headers)
-    print(newcomers_excel_data)
-    # check_email_tracker_list(employee_data,site_id,email_tracking_list_id,application_headers, mail_sender, shippment_data, office_pickup_data, equipment_data, user_id)
 
-    
+def main(headers, application_id, drive_id, item_id, site_id, email_tracking_list_id, newbies_credentials_list_id, user_id):
+    month_sheet, excel_sheets_data = get_excel_sheet(drive_id, item_id, headers)
+    mail_sender = get_mail_sender_instance()
+    sharepoint_data = get_sharepoint_data(headers, site_id, newbies_credentials_list_id)
+    sulu_data = SuluData(application_id, headers)    
+    for sheet in month_sheet:
+        newcomers_excel_data, shippment_data,office_pickup_data, equipment_data = get_newcomers_data(drive_id, item_id, headers, sheet)
+        print(newcomers_excel_data)
+        employee_data = process_employee_data(sulu_data, newcomers_excel_data,sharepoint_data, mail_sender, headers, user_id)
+        print(employee_data)  
+        # check_email_tracker_list(employee_data,site_id,email_tracking_list_id,headers, mail_sender, shippment_data, office_pickup_data, equipment_data, user_id)
     
 
 if __name__ == "__main__":
@@ -525,20 +556,16 @@ if __name__ == "__main__":
     email_tracking_list_id = os.getenv("EMAIL_TRACKING_LIST_ID")
     send_grid_headers = os.getenv("SEND_GRID_CREDENTIALS")
     newbies_credentials_list_id = os.getenv("NEWBIES_CREDENTIALS_LIST_ID")# Newbies Credentials
-    
     mail_sender = MailSender()
     user_id = "maciej.cichocki@lingarogroup.com"
     headers = asyncio.run(MsGrapgSDKMenager(tenant_id=tenant_id, client_id=client_id, client_secret=client_secret))
-    sheet_counter = 52    # dodanie funkcji automatycznego zmieniania sheet w excelu na podstawie daty 
     main(
-        application_headers=headers,
+        headers=headers,
         application_id=application_id,
         drive_id=drive_id,
         item_id=item_id,
-        sheet=sheet_counter,
         site_id=site_id,
         email_tracking_list_id=email_tracking_list_id,
         newbies_credentials_list_id = newbies_credentials_list_id,
         user_id = user_id
     )
-    
