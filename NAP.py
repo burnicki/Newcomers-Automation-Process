@@ -39,13 +39,13 @@ class MsGraph:
         }
         return headers
         
-async def MsGrapgSDKMenager(tenant_id, client_id, client_secret):
+async def msgraph_sdk_menager(tenant_id, client_id, client_secret):
     sdk = MsGraph(tenant_id, client_id, client_secret)
     headers = await sdk.generate_msgraph_headers()
     return headers
 
 async def get_user(tenant_id, client_id, client_secret, user_id):
-    headers = await MsGrapgSDKMenager(tenant_id, client_id, client_secret)
+    headers = await msgraph_sdk_menager(tenant_id, client_id, client_secret)
     endpoint = f'https://graph.microsoft.com/v1.0/users/{user_id}'
     response = requests.get(endpoint, headers=headers)
 
@@ -526,9 +526,7 @@ def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, hea
             if not already_on_list:
                 employee_details_to_add.append(employee) 
     if employee_details_to_add:
-        add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_details_to_add, mail_sender, shippment_data, office_pick_up, equipment_data)
-        
-        
+        add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_details_to_add, mail_sender, shippment_data, office_pick_up, equipment_data)     
 
 def main(headers, application_id, drive_id, item_id, site_id, email_tracking_list_id, newbies_credentials_list_id, user_id):
     month_sheet, excel_sheets_data = get_excel_sheet(drive_id, item_id, headers)
@@ -540,9 +538,8 @@ def main(headers, application_id, drive_id, item_id, site_id, email_tracking_lis
         print(newcomers_excel_data)
         employee_data = process_employee_data(sulu_data, newcomers_excel_data,sharepoint_data, mail_sender, headers, user_id)
         print(employee_data)  
-        # check_email_tracker_list(employee_data,site_id,email_tracking_list_id,headers, mail_sender, shippment_data, office_pickup_data, equipment_data, user_id)
+        check_email_tracker_list(employee_data,site_id,email_tracking_list_id,headers, mail_sender, shippment_data, office_pickup_data, equipment_data, user_id)
     
-
 if __name__ == "__main__":
     load_dotenv("/Users/maciejcichocki/Documents/GitHub/newcomers_process_automation/Newcomers-Automation-Process/token.env")
     drive_id = os.getenv("DRIVE_ID")    #Sharepoint Data
@@ -558,7 +555,7 @@ if __name__ == "__main__":
     newbies_credentials_list_id = os.getenv("NEWBIES_CREDENTIALS_LIST_ID")# Newbies Credentials
     mail_sender = MailSender()
     user_id = "maciej.cichocki@lingarogroup.com"
-    headers = asyncio.run(MsGrapgSDKMenager(tenant_id=tenant_id, client_id=client_id, client_secret=client_secret))
+    headers = asyncio.run(msgraph_sdk_menager(tenant_id=tenant_id, client_id=client_id, client_secret=client_secret))
     main(
         headers=headers,
         application_id=application_id,
