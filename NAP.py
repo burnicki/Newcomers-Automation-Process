@@ -1,3 +1,4 @@
+import logging.config
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, time
@@ -14,6 +15,10 @@ import asyncio
 from azure.identity.aio import ClientSecretCredential
 from msgraph import GraphServiceClient
 from dateutil.relativedelta import relativedelta
+import logging
+import colorlog
+from colorama import Fore, Style
+
 
 class MsGraph:
     def __init__(self, tenant_id, client_id, client_secret):
@@ -113,7 +118,7 @@ class SuluData():
         user_response = requests.get(user_url, headers=self.headers, params={'$select': user_properties_str})
         self.user = user_response.json()
         return self.user
-     
+
 class Newcomers():
     def __init__(self):
         self.indexes = []
@@ -124,6 +129,7 @@ class Newcomers():
         self.key = os.getenv("ADDRESS_VALIDATION_API_KEY_LINGARO")
         
     def validate_address(self,api_key,address_to_validate):
+        logger.info("Method - validate_address init.")
         url = "https://addressvalidation.googleapis.com/v1:validateAddress"
         params = {
             "key" : api_key
@@ -365,6 +371,46 @@ class NewcomersManager():
 
     def get_equipment_data(self):
         return self.newcomers.get_equipment_data()
+    
+def setup_logger():
+    logging_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "detailed": {
+                "()": colorlog.ColoredFormatter,
+                "format": "\n[%(log_color)s%(levelname)s|%(module)s|L%(lineno)d] %(asctime)s: %(log_color)s%(message)s",
+                "datefmt": "%Y-%m-%dT%H:%M:%S%z",
+                "log_colors": {
+                    "DEBUG": "cyan",
+                    "INFO": "green",
+                    "WARNING": "yellow",
+                    "ERROR": "red",
+                    "CRITICAL": "red,bg_white",
+                }
+            }
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "level": "DEBUG",
+                "formatter": "detailed"
+            }
+        },
+        "loggers": {
+            "my_logger": {
+                "level": "DEBUG",
+                "handlers": ["console"]
+            }
+        },
+        "root": {
+            "level": "WARNING",
+        }
+    }
+    logging.config.dictConfig(logging_config)
+    return logging.getLogger("my_logger")
+
+        
       
 def process_string(s):
     s = unidecode(s)
@@ -386,6 +432,7 @@ def get_sulu_data(application_id, headers,employee_id):
     return data
 
 def get_excel_sheet(drive_id, item_id, headers):
+        logger.info("func - get_excel_sheet init.")
         newcomers = Newcomers()
         sheet_list = newcomers.get_excel_file_from_sharepoint(drive_id, item_id, headers)
         month_list = []
@@ -453,6 +500,7 @@ def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data, mail_
                     ))
                     employes_from_ltl.add((
                         excel_employee_id,
+                        sulu_employee_id,
                         sulu_employee_name,
                         excel_employee_start_date
                     ))
@@ -460,7 +508,8 @@ def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data, mail_
         except AttributeError as e:
             print(f"Attribute Error {e}")
     if employes_from_ltl:
-        content = f"Employee password must be reset to - L1n99aROrba22 <br> {employes_from_ltl}"
+        df = pd.DataFrame(employes_from_ltl, columns=['Employee id','Microsoft id', 'Name', 'Start date'])
+        content = f"Employee password must be reset to - L1n99aROrba22 <br> {df.to_html(index=False)}"
         mail_sender.send_mail(user_id,"dominik.boras@lingarogroup.com", "Long Term Leavers", content, "2137", headers)
     print(employes_from_ltl)
     return employee_data_for_sharepoint_email_tracking_list # employee_data
@@ -501,7 +550,6 @@ def add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, header
         mail_sender.send_mail("cichy18711@gmail.com", "SELF PICKUP", office_pick_up.to_html(index=False), "2137", headers)
     mail_sender.send_mail("cichy18711@gmail.com", "EQUIPMENT DATA", equipment_data.to_html(index=False), "2137", headers)
 
-
 def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, headers, mail_sender, shippment_data, office_pick_up, equipment_data):
     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists/{email_tracking_list_id}/items?expand=fields"
     response = requests.get(url=url, headers=headers)
@@ -528,7 +576,8 @@ def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, hea
     if employee_details_to_add:
         add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_details_to_add, mail_sender, shippment_data, office_pick_up, equipment_data)     
 
-def main(headers, application_id, drive_id, item_id, site_id, email_tracking_list_id, newbies_credentials_list_id, user_id):
+def main(logger,headers, application_id, drive_id, item_id, site_id, email_tracking_list_id, newbies_credentials_list_id, user_id):
+    logger.info("Main init.")
     month_sheet, excel_sheets_data = get_excel_sheet(drive_id, item_id, headers)
     mail_sender = get_mail_sender_instance()
     sharepoint_data = get_sharepoint_data(headers, site_id, newbies_credentials_list_id)
@@ -538,9 +587,10 @@ def main(headers, application_id, drive_id, item_id, site_id, email_tracking_lis
         print(newcomers_excel_data)
         employee_data = process_employee_data(sulu_data, newcomers_excel_data,sharepoint_data, mail_sender, headers, user_id)
         print(employee_data)  
-        check_email_tracker_list(employee_data,site_id,email_tracking_list_id,headers, mail_sender, shippment_data, office_pickup_data, equipment_data, user_id)
+        # check_email_tracker_list(employee_data,site_id,email_tracking_list_id,headers, mail_sender, shippment_data, office_pickup_data, equipment_data, user_id)
     
 if __name__ == "__main__":
+    logger = setup_logger() # This gets the root logger
     load_dotenv("/Users/maciejcichocki/Documents/GitHub/newcomers_process_automation/Newcomers-Automation-Process/token.env")
     drive_id = os.getenv("DRIVE_ID")    #Sharepoint Data
     item_id = os.getenv("ITEM_ID")    #Sharepoint Data
@@ -553,10 +603,13 @@ if __name__ == "__main__":
     email_tracking_list_id = os.getenv("EMAIL_TRACKING_LIST_ID")
     send_grid_headers = os.getenv("SEND_GRID_CREDENTIALS")
     newbies_credentials_list_id = os.getenv("NEWBIES_CREDENTIALS_LIST_ID")# Newbies Credentials
+    logger.info("Env variables Loaded.")
     mail_sender = MailSender()
     user_id = "maciej.cichocki@lingarogroup.com"
     headers = asyncio.run(msgraph_sdk_menager(tenant_id=tenant_id, client_id=client_id, client_secret=client_secret))
+    logger.info("msgrapg_sdk connected.")
     main(
+        logger = logger,
         headers=headers,
         application_id=application_id,
         drive_id=drive_id,
