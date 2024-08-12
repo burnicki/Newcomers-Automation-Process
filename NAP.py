@@ -186,21 +186,22 @@ class Newcomers():
         df_newcomers = df_newcomers.loc[filt, data]
         df_newcomers = df_newcomers.dropna(subset = ['name'])
         df_newcomers['name'] = df_newcomers['name'].apply(unidecode).str.strip().str.lower()
-        logger.debug(f"Cleaned DataFrame: \n {df_newcomers}")
+        df_newcomers = df_newcomers.dropna(subset=['address'])
+        df_newcomers = df_newcomers.dropna(subset=['employeeID'])
+        df_newcomers.drop(df_newcomers[df_newcomers['umowa'] != "podpisana"].index, inplace = True)
+        df_newcomers['laptop'] = df_newcomers['laptop'].replace(np.nan, "standard win" ,regex = True)
+        df_newcomers['employeeID'] = df_newcomers['employeeID'].astype(int)
+        df_newcomers['telefon sluzbowy'] = df_newcomers['telefon sluzbowy'].replace(np.nan, " " ,regex = True)
+        df_newcomers['phone'] = df_newcomers['phone'].astype(str).str.replace(" ", "")
+        df_newcomers['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'] = df_newcomers['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'].replace(np.nan, " ", regex = True)
+        logger.debug(f"Cleaned DataFrame: \n {df_newcomers.to_string()}")
         return df_newcomers
 
     def calculate_days_to_start(self, cleaned_dataframe):
         logger.info(f"Method calculate_days_to_start init.")
         current_date = datetime.today()
-        logger.info(f"Current Date - {current_date}")
-        df_newcomers = cleaned_dataframe
-        test = current_date - timedelta(days=30)
-        logger.debug(f"Date that will be consider by program - {test}")
-        df_newcomers_cleaned = df_newcomers.dropna(subset=['address'])
-        df_newcomers_cleaned = df_newcomers_cleaned.dropna(subset=['employeeID'])
-        df_newcomers_cleaned.drop(df_newcomers_cleaned[df_newcomers_cleaned['umowa'] != "podpisana"].index, inplace = True)
-        logger.info(f"DataFrame after dropna values: \n {df_newcomers_cleaned}")
-        for index, row in df_newcomers_cleaned.iterrows():
+        
+        for index, row in cleaned_dataframe.iterrows():
             start_date = row['start date'] 
             logger.info(f"{row['name']} | {start_date} | {type(start_date)}")
             if not isinstance(start_date, datetime):
@@ -210,17 +211,15 @@ class Newcomers():
                 self.indexes.append(int(index))  
             elif start_date - timedelta(days=23) <= current_date <= start_date and start_date.weekday() in [2, 3, 4]:  # Sroda, Czwartek, Piatek (days = 2)
                 self.indexes.append(int(index))
-        couple_days_away = df_newcomers.loc[self.indexes]
+                
+        couple_days_away = cleaned_dataframe.loc[self.indexes]
         df = couple_days_away['address'].values.tolist()
+        
         for address in df:
             validate = self.validate_address(self.key,address)
             self.valid_addresses.append(validate)
+            
         couple_days_away['address'] = self.valid_addresses
-        couple_days_away['phone'] = couple_days_away['phone'].astype(str).str.replace(" ", "") 
-        couple_days_away['employeeID'] = couple_days_away['employeeID'].astype(int)
-        couple_days_away['laptop'] = couple_days_away['laptop'].replace(np.nan, "standard win" ,regex = True)
-        couple_days_away['telefon sluzbowy'] = couple_days_away['telefon sluzbowy'].replace(np.nan, " " ,regex = True)
-        couple_days_away['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'] = couple_days_away['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'].replace(np.nan, " " ,regex = True)
         self.equpiment_data = couple_days_away[['employeeID','name', 'start date', 'laptop', 'telefon sluzbowy', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
         if not couple_days_away['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'].str.strip().str.lower().eq("osobiście odbiór".strip().lower()).any():
             self.office = couple_days_away[['employeeID','name', 'address', 'phone']]
@@ -375,6 +374,10 @@ class NewcomersManager():
     def get_equipment_data(self):
         return self.newcomers.get_equipment_data()
     
+class Dhl():
+    """Connect via api and create label for shipping, get track number"""
+class Jira():
+    """Figure out how to connect via api, find new person tickets and close them"""
 def setup_logger():
     logging_config = {
         "version": 1,
@@ -407,9 +410,7 @@ def setup_logger():
     }
     my_logger = logging.config.dictConfig(logging_config)
     logger = logging.getLogger(my_logger)  # create a logger with a custom name
-    return logger
-
-        
+    return logger     
       
 def process_string(s):
     s = unidecode(s)
@@ -513,7 +514,7 @@ def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data, mail_
     print(employes_from_ltl)
     return employee_data_for_sharepoint_email_tracking_list # employee_data
 
-def add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_data, mail_sender, shippment_data, office_pick_up, equipment_data):
+def add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_data, mail_sender, shippment_data, office_pick_up, equipment_data, user_if):
     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists/{email_tracking_list_id}/items"
     for data in employee_data:
         entra_id = str(data[0])
@@ -543,13 +544,13 @@ def add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, header
     shippment_data = shippment_data[['name','address','phone']]
     equipment_data = equipment_data[['name', 'start date', 'laptop', 'telefon sluzbowy', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
     content = f"Hi,<br>Please order a courier and prepare a delivery note for:<br>{shippment_data.to_html(index=False)}<br> Automatically generated email, addresse's was validated using google  address validate api."
-    mail_sender.send_mail("maciej.cichocki@lingarogroup.com","offce@lingarogroup.com", "Ordering a shipment courier", content, "2137", headers)
+    mail_sender.send_mail(user_id,"offce@lingarogroup.com", "Ordering a shipment courier", content, "2137", headers)
     if office_pick_up:
         office_pick_up = office_pick_up[['name', 'address','phone','Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
-        mail_sender.send_mail("cichy18711@gmail.com", "SELF PICKUP", office_pick_up.to_html(index=False), "2137", headers)
-    mail_sender.send_mail("cichy18711@gmail.com", "EQUIPMENT DATA", equipment_data.to_html(index=False), "2137", headers)
+        mail_sender.send_mail(user_id, "SELF PICKUP", office_pick_up.to_html(index=False), "2137", headers)
+    mail_sender.send_mail(user_id, "EQUIPMENT DATA", equipment_data.to_html(index=False), "2137", headers)
 
-def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, headers, mail_sender, shippment_data, office_pick_up, equipment_data):
+def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, headers, mail_sender, shippment_data, office_pick_up, equipment_data, user_id):
     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists/{email_tracking_list_id}/items?expand=fields"
     response = requests.get(url=url, headers=headers)
     if response.status_code != 200:
@@ -561,7 +562,7 @@ def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, hea
         employee_id = str(employee[2])
         already_on_list = False
         start_date = datetime.strptime(employee[3], "%Y-%m-%d %H:%M:%S")
-        if start_date - timedelta(days=4) <= current_date <= start_date:
+        if start_date - timedelta(days=3) <= current_date <= start_date:  # when 3 days away from start date newcomer mail will be send.
             for data in result["value"]:
                 fields = data["fields"]
                 list_employee_id = fields['EmployeeId']
@@ -573,7 +574,7 @@ def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, hea
             if not already_on_list:
                 employee_details_to_add.append(employee) 
     if employee_details_to_add:
-        add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_details_to_add, mail_sender, shippment_data, office_pick_up, equipment_data)     
+        add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_details_to_add, mail_sender, shippment_data, office_pick_up, equipment_data,user_id)     
 
 def main(logger,headers, application_id, drive_id, item_id, site_id, email_tracking_list_id, newbies_credentials_list_id, user_id):
     logger.info("Main init.")
@@ -586,10 +587,10 @@ def main(logger,headers, application_id, drive_id, item_id, site_id, email_track
         print(newcomers_excel_data)
         employee_data = process_employee_data(sulu_data, newcomers_excel_data,sharepoint_data, mail_sender, headers, user_id)
         print(employee_data)  
-        # check_email_tracker_list(employee_data,site_id,email_tracking_list_id,headers, mail_sender, shippment_data, office_pickup_data, equipment_data, user_id)
+        check_email_tracker_list(employee_data,site_id,email_tracking_list_id,headers, mail_sender, shippment_data, office_pickup_data, equipment_data, user_id)
     
 if __name__ == "__main__":
-    logger = setup_logger() # This gets the root logger
+    logger = setup_logger()
     load_dotenv("/Users/maciejcichocki/Documents/GitHub/newcomers_process_automation/Newcomers-Automation-Process/token.env")
     drive_id = os.getenv("DRIVE_ID")    #Sharepoint Data
     item_id = os.getenv("ITEM_ID")    #Sharepoint Data
