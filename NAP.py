@@ -8,16 +8,12 @@ import os
 import requests
 from io import BytesIO
 import json
-import msal
-import webbrowser
 import base64
 import asyncio
 from azure.identity.aio import ClientSecretCredential
-from msgraph import GraphServiceClient
 from dateutil.relativedelta import relativedelta
 import logging
 import colorlog
-from colorama import Fore, Style
 
 
 class MsGraph:
@@ -163,10 +159,7 @@ class Newcomers():
         download_response = requests.get(url=download_url)
         download_response.raise_for_status()
         self.file_content = BytesIO(download_response.content)
-        # Load the Excel file
         excel_file = pd.ExcelFile(self.file_content)
-        
-        # Print the names of the sheets
         sheet_names = excel_file.sheet_names
         logger.debug(f"Method get_excel_file_from_sharepoint \n {sheet_names}")
         return sheet_names
@@ -176,43 +169,42 @@ class Newcomers():
         df = pd.read_excel(self.file_content, sheet_name=sheet)
         logger.debug(f"Raw DataFeame from create_datafeame method: {df.to_string()}")
         return df
-        
-    def clean_newcomers_excel_data(self, raw_dataframe):
+    def filter_dataframe(self,raw_df):
+        logger.info()
+    def clean_newcomers_excel_data(self, raw_df):
         logger.info(f"Method clean_newcomers_excel_data init.")
-        logger.info(raw_dataframe)
-        df_newcomers = raw_dataframe
         data = ['employeeID', 'name', 'address', 'phone', 'start date', 'e-mail before start', 'laptop','telefon sluzbowy', 'umowa', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']
-        filt = (~df_newcomers['address'].str.contains("Mexico|MEXICO|México", na=False))
-        df_newcomers = df_newcomers.loc[filt, data]
-        df_newcomers = df_newcomers.dropna(subset = ['name'])
-        df_newcomers['name'] = df_newcomers['name'].apply(unidecode).str.strip().str.lower()
-        df_newcomers = df_newcomers.dropna(subset=['address'])
-        df_newcomers = df_newcomers.dropna(subset=['employeeID'])
-        df_newcomers.drop(df_newcomers[df_newcomers['umowa'] != "podpisana"].index, inplace = True)
-        df_newcomers['laptop'] = df_newcomers['laptop'].replace(np.nan, "standard win" ,regex = True)
-        df_newcomers['employeeID'] = df_newcomers['employeeID'].astype(int)
-        df_newcomers['telefon sluzbowy'] = df_newcomers['telefon sluzbowy'].replace(np.nan, " " ,regex = True)
-        df_newcomers['phone'] = df_newcomers['phone'].astype(str).str.replace(" ", "")
-        df_newcomers['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'] = df_newcomers['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'].replace(np.nan, " ", regex = True)
-        logger.debug(f"Cleaned DataFrame: \n {df_newcomers.to_string()}")
-        return df_newcomers
+        filt = (~raw_df['address'].str.contains("Mexico|MEXICO|México", na=False))
+        raw_df = raw_df.loc[filt, data]
+        raw_df = raw_df.dropna(subset = ['name'])
+        raw_df['name'] = raw_df['name'].apply(unidecode).str.strip().str.lower()
+        raw_df = raw_df.dropna(subset=['address'])
+        raw_df = raw_df.dropna(subset=['employeeID'])
+        raw_df.drop(raw_df[raw_df['umowa'] != "podpisana"].index, inplace = True)
+        raw_df['laptop'] = raw_df['laptop'].replace(np.nan, "standard win" ,regex = True)
+        raw_df['employeeID'] = raw_df['employeeID'].astype(int)
+        raw_df['telefon sluzbowy'] = raw_df['telefon sluzbowy'].replace(np.nan, " " ,regex = True)
+        raw_df['phone'] = raw_df['phone'].astype(str).str.replace(" ", "")
+        raw_df['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'] = raw_df['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'].replace(np.nan, " ", regex = True)
+        logger.debug(f"Cleaned DataFrame: \n {raw_df.to_string()}")
+        return raw_df
 
-    def calculate_days_to_start(self, cleaned_dataframe):
+    def calculate_days_to_start(self, clean_df):
         logger.info(f"Method calculate_days_to_start init.")
         current_date = datetime.today()
         
-        for index, row in cleaned_dataframe.iterrows():
+        for index, row in clean_df.iterrows():
             start_date = row['start date'] 
             logger.info(f"{row['name']} | {start_date} | {type(start_date)}")
             if not isinstance(start_date, datetime):
                 start_date = datetime.strptime(start_date, '%d.%m.%Y')
                 logger.warning(f"Wrong start date format was found in: \n {row}")
-            if current_date <= start_date <= current_date + timedelta(days=25) and start_date.weekday() in [0, 1, 5, 6]:  # Poniedziałek, Wtorek, Sobota, Niedziela
+            if current_date <= start_date <= current_date + timedelta(days=25) and start_date.weekday() in [0, 1, 5, 6]:  
                 self.indexes.append(int(index))  
-            elif start_date - timedelta(days=23) <= current_date <= start_date and start_date.weekday() in [2, 3, 4]:  # Sroda, Czwartek, Piatek (days = 2)
+            elif start_date - timedelta(days=23) <= current_date <= start_date and start_date.weekday() in [2, 3, 4]: 
                 self.indexes.append(int(index))
                 
-        couple_days_away = cleaned_dataframe.loc[self.indexes]
+        couple_days_away = clean_df.loc[self.indexes]
         df = couple_days_away['address'].values.tolist()
         
         for address in df:
@@ -360,7 +352,7 @@ class NewcomersManager():
         self.excel_sheets_list = self.newcomers.get_excel_file_from_sharepoint(drive_id, item_id, headers) 
         self.raw_dataframe = self.newcomers.create_dataframe(sheet)
         self.clean_dataframe = self.newcomers.clean_newcomers_excel_data(raw_dataframe=self.raw_dataframe)
-        self.processed_dataframe = self.newcomers.calculate_days_to_start(cleaned_dataframe=self.clean_dataframe)
+        self.processed_dataframe = self.newcomers.calculate_days_to_start(clean_df=self.clean_dataframe)
     
     def get_excel_data(self):
         return self.processed_dataframe
@@ -444,7 +436,7 @@ def get_excel_sheet(drive_id, item_id, headers):
         next_month = datetime.now() + relativedelta(months=1)
         next_month = next_month.replace(day=1)
         next_month = datetime.strftime(next_month, "%B %Y").lower().strip()
-        time_period = datetime.now() + timedelta(days=25)
+        time_period = datetime.now() + timedelta(days=6)
         time_period = datetime.strftime(time_period, "%B %Y").lower().strip()
         if time_period >= next_month: 
             month_list.append(current_date)
@@ -547,8 +539,8 @@ def add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, header
     mail_sender.send_mail(user_id,"offce@lingarogroup.com", "Ordering a shipment courier", content, "2137", headers)
     if office_pick_up:
         office_pick_up = office_pick_up[['name', 'address','phone','Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
-        mail_sender.send_mail(user_id, "SELF PICKUP", office_pick_up.to_html(index=False), "2137", headers)
-    mail_sender.send_mail(user_id, "EQUIPMENT DATA", equipment_data.to_html(index=False), "2137", headers)
+        mail_sender.send_mail(user_id,"sebastian.fraczak@lingarogroup.com", "SELF PICKUP", office_pick_up.to_html(index=False), "2137", headers)
+    mail_sender.send_mail(user_id,"sebastian.fraczak@lingarogroup.com", "EQUIPMENT DATA", equipment_data.to_html(index=False), "2137", headers)
 
 def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, headers, mail_sender, shippment_data, office_pick_up, equipment_data, user_id):
     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists/{email_tracking_list_id}/items?expand=fields"
