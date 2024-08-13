@@ -14,6 +14,7 @@ from azure.identity.aio import ClientSecretCredential
 from dateutil.relativedelta import relativedelta
 import logging
 import colorlog
+import sys
 
 
 class MsGraph:
@@ -117,11 +118,7 @@ class SuluData():
 
 class Newcomers():
     def __init__(self):
-        self.indexes = []
-        self.office = pd.DataFrame()  
-        self.mails = pd.DataFrame()   
-        self.self_pickup = pd.DataFrame()  
-        self.valid_addresses = []
+ 
         self.key = os.getenv("ADDRESS_VALIDATION_API_KEY_LINGARO")
         
     def validate_address(self,api_key,address_to_validate):
@@ -167,73 +164,92 @@ class Newcomers():
     def create_dataframe(self, sheet):
         logger.info(f"Method create_dataframe init.")
         df = pd.read_excel(self.file_content, sheet_name=sheet)
-        logger.debug(f"Raw DataFeame from create_datafeame method: {df.to_string()}")
+        logger.debug(f"Raw Dataframe from create_datafeame method: \n{df.head()}")
         return df
-    def filter_dataframe(self,raw_df):
-        logger.info()
-    def clean_newcomers_excel_data(self, raw_df):
-        logger.info(f"Method clean_newcomers_excel_data init.")
+    
+    def filter_df(self,raw_df):
+        logger.info("Filtering data.")
+        if raw_df.empty:
+            raise Exception(logger.error("Empty dataframe was passed to filter_df"))
         data = ['employeeID', 'name', 'address', 'phone', 'start date', 'e-mail before start', 'laptop','telefon sluzbowy', 'umowa', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']
         filt = (~raw_df['address'].str.contains("Mexico|MEXICO|México", na=False))
-        raw_df = raw_df.loc[filt, data]
+        filtered_df = raw_df.loc[filt, data]
+        return filtered_df
+    
+    def drop_missing_values(self, raw_df):
+        logger.info("Droping NAN values")
         raw_df = raw_df.dropna(subset = ['name'])
-        raw_df['name'] = raw_df['name'].apply(unidecode).str.strip().str.lower()
         raw_df = raw_df.dropna(subset=['address'])
         raw_df = raw_df.dropna(subset=['employeeID'])
         raw_df.drop(raw_df[raw_df['umowa'] != "podpisana"].index, inplace = True)
+        return raw_df
+    
+    def unidecode_name(self, raw_df):
+        logger.info("Removing all special characters, lowercasing, spaces")
+        raw_df['name'] = raw_df['name'].apply(unidecode).str.strip().str.lower()
+        return raw_df
+    
+    def update_values(self,raw_df):
+        logger.info("Updating values.")
         raw_df['laptop'] = raw_df['laptop'].replace(np.nan, "standard win" ,regex = True)
         raw_df['employeeID'] = raw_df['employeeID'].astype(int)
         raw_df['telefon sluzbowy'] = raw_df['telefon sluzbowy'].replace(np.nan, " " ,regex = True)
         raw_df['phone'] = raw_df['phone'].astype(str).str.replace(" ", "")
         raw_df['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'] = raw_df['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'].replace(np.nan, " ", regex = True)
-        logger.debug(f"Cleaned DataFrame: \n {raw_df.to_string()}")
         return raw_df
+    
+    def clean_newcomers_excel_data(self, raw_df):
+        logger.info("Method clean_newcomers_excel_data init.")
+        filtered_df = self.filter_df(raw_df)
+        df_no_missing_values = self.drop_missing_values(filtered_df)
+        df_unidecoded_names = self.unidecode_name(df_no_missing_values)
+        processed_df = self.update_values(df_unidecoded_names)
+        logger.info("Data cleaning complete.")
+        logger.debug(processed_df.to_string())
+        return processed_df
 
-    def calculate_days_to_start(self, clean_df):
+    def calculate_days_to_start(self, processed_df):
         logger.info(f"Method calculate_days_to_start init.")
         current_date = datetime.today()
-        
-        for index, row in clean_df.iterrows():
+        indexes = []
+        if processed_df.empty:
+            logger.error("Error, empty dataframe was passed to calculate_days_to_start")
+            return pd.DataFrame()
+        for index, row in processed_df.iterrows():
             start_date = row['start date'] 
             logger.info(f"{row['name']} | {start_date} | {type(start_date)}")
             if not isinstance(start_date, datetime):
                 start_date = datetime.strptime(start_date, '%d.%m.%Y')
                 logger.warning(f"Wrong start date format was found in: \n {row}")
             if current_date <= start_date <= current_date + timedelta(days=25) and start_date.weekday() in [0, 1, 5, 6]:  
-                self.indexes.append(int(index))  
+                indexes.append(int(index))  
             elif start_date - timedelta(days=23) <= current_date <= start_date and start_date.weekday() in [2, 3, 4]: 
-                self.indexes.append(int(index))
-                
-        couple_days_away = clean_df.loc[self.indexes]
-        df = couple_days_away['address'].values.tolist()
-        
-        for address in df:
-            validate = self.validate_address(self.key,address)
-            self.valid_addresses.append(validate)
-            
-        couple_days_away['address'] = self.valid_addresses
-        self.equpiment_data = couple_days_away[['employeeID','name', 'start date', 'laptop', 'telefon sluzbowy', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
-        if not couple_days_away['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'].str.strip().str.lower().eq("osobiście odbiór".strip().lower()).any():
-            self.office = couple_days_away[['employeeID','name', 'address', 'phone']]
-            self.mails = couple_days_away[['e-mail before start']]
-        else:
-            self.self_pickup = couple_days_away[['employeeID','name', 'address','phone','Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
-        return couple_days_away
-
-    def get_equipment_data(self):
-        return self.equpiment_data
+                indexes.append(int(index))
+        return indexes
     
-    def get_employee_personal_mail(self):
-        return self.mails
-
-    def get_office_pickup_list(self):
-        if self.self_pickup.empty:
-            return 0
+    def df_address_validation(self,processed_df ,indexes):
+        if not indexes:
+            logger.error("No indexes match conditions on calculate_days_to_start. Program will exit.")
+            sys.exit(1)
+        validad_addresses = []
+        df = processed_df.loc[indexes]
+        for address in df['address'].values.tolist():
+            validate = self.validate_address(self.key,address)
+            validad_addresses.append(validate)
+        df['address'] = validad_addresses
+        logger.info("Dataframe was updated with valid addresses. ")
+        logger.debug(df.to_string())
+        return df
+    
+    def extract_df_data(self,df):
+        self_pickup = None
+        equpiment_data = df[['employeeID','name', 'start date', 'laptop', 'telefon sluzbowy', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
+        if not df['Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)'].str.strip().str.lower().eq("osobiście odbiór".strip().lower()).any():
+            shippment_data = df[['employeeID','name', 'address', 'phone']]
         else:
-            return self.self_pickup
-        
-    def get_courier_shippment(self):
-        return self.office
+            self_pickup = df[['employeeID','name', 'address','phone','Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
+
+        return equpiment_data, shippment_data, self_pickup
 
 class MailSender():
     def draft_atttachment(self,file_path):
@@ -350,22 +366,19 @@ class NewcomersManager():
     def __init__(self, drive_id, item_id, headers, sheet):
         self.newcomers = Newcomers()
         self.excel_sheets_list = self.newcomers.get_excel_file_from_sharepoint(drive_id, item_id, headers) 
-        self.raw_dataframe = self.newcomers.create_dataframe(sheet)
-        self.clean_dataframe = self.newcomers.clean_newcomers_excel_data(raw_dataframe=self.raw_dataframe)
-        self.processed_dataframe = self.newcomers.calculate_days_to_start(clean_df=self.clean_dataframe)
+        self.raw_df = self.newcomers.create_dataframe(sheet)
+        self.cleaned_df = self.newcomers.clean_newcomers_excel_data(self.raw_df)
+        self.indexes = self.newcomers.calculate_days_to_start(self.cleaned_df)
+        self.processed_df = self.newcomers.df_address_validation(self.cleaned_df,self.indexes)
     
     def get_excel_data(self):
-        return self.processed_dataframe
+        return self.processed_df
     
-    def get_shipment_data(self):
-        return self.newcomers.get_courier_shippment()
-
-    def get_office_pickup_data(self):
-        return self.newcomers.get_office_pickup_list()
-
-    def get_equipment_data(self):
-        return self.newcomers.get_equipment_data()
-    
+    def extract_shipping_data(self):
+        logger.info("Extracting all shipping data")
+        equipment_data, shippment_data, self_pickup = self.newcomers.extract_df_data(self.processed_df)
+        return equipment_data, shippment_data, self_pickup
+       
 class Dhl():
     """Connect via api and create label for shipping, get track number"""
 class Jira():
@@ -448,11 +461,9 @@ def get_excel_sheet(drive_id, item_id, headers):
     
 def get_newcomers_data(drive_id, item_id, headers, sheet): 
     menager = NewcomersManager(drive_id, item_id, headers, sheet)
-    newcomers_excel_data = menager.get_excel_data()
-    shipment_data = menager.get_shipment_data()
-    office_pickup = menager.get_office_pickup_data()
-    equipment_data = menager.get_equipment_data()
-    return newcomers_excel_data, shipment_data, office_pickup , equipment_data
+    process_df = menager.get_excel_data()
+    equipment_data, shippment_data, self_pickup = menager.extract_shipping_data()
+    return process_df, equipment_data, shippment_data, self_pickup
 
 def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data, mail_sender, headers, user_id):
     employee_data_for_sharepoint_email_tracking_list = set()
@@ -513,7 +524,7 @@ def add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, header
         employee_name = str(data[1])
         employee_id = str(data[2])
         employee_start_date = str(data[3])  # format = '2024-07-22 00:00:00'
-        employee_personal_mail = str(data[4])
+        employee_personal_mail = str(data[4]) 
         employee_one_password = str(data[5])
         start_date = datetime.strptime(employee_start_date, "%Y-%m-%d %H:%M:%S")
         end_date = (start_date + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S")
@@ -575,7 +586,7 @@ def main(logger,headers, application_id, drive_id, item_id, site_id, email_track
     sharepoint_data = get_sharepoint_data(headers, site_id, newbies_credentials_list_id)
     sulu_data = SuluData(application_id, headers)    
     for sheet in month_sheet:
-        newcomers_excel_data, shippment_data,office_pickup_data, equipment_data = get_newcomers_data(drive_id, item_id, headers, sheet)
+        newcomers_excel_data, equipment_data, shippment_data, office_pickup_data = get_newcomers_data(drive_id, item_id, headers, sheet)
         print(newcomers_excel_data)
         employee_data = process_employee_data(sulu_data, newcomers_excel_data,sharepoint_data, mail_sender, headers, user_id)
         print(employee_data)  
