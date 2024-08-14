@@ -80,7 +80,14 @@ class SharepointData():
             onepassword_link = fields['PasswordShareLink']
             employee_data.append([employee_id,entra_id,onepassword_link])
         return employee_data
-          
+    
+    def get_sharepoint_email_tracker(self, site_id, email_tracker_list_id):
+        url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists/{email_tracking_list_id}/items?expand=fields"
+        response = requests.get(url=url, headers=headers)
+        if response.status_code != 200:
+            raise Exception(response.json())
+        result = response.json()
+        return result          
 class SuluData():
 
     def __init__(self, application_id, headers):
@@ -308,12 +315,12 @@ class MailSender():
 
     def send_welcome_mail_to_newcomer(self, employee_full_name, employee_start_date, onepassword_link, user_personal_mail):
         employee_start_date_with_time = datetime.combine(employee_start_date, time(hour=8, minute=0))
-        employee_STARTDATE = employee_start_date_with_time.strftime("%d %B %Y %H:%M")
-        employee_ONEPASSWORD_ACTIVE_DATE = datetime.combine(
+        employee_start_date = employee_start_date_with_time.strftime("%d %B %Y %H:%M")
+        employee_onepassword_active_date = datetime.combine(
             employee_start_date_with_time - timedelta(days=2),
             time(hour=4, minute=0)
         )
-        employee_CREDENTIALS_ENABLED = employee_ONEPASSWORD_ACTIVE_DATE.strftime("%d %B %Y %H:%M")
+        employee_CREDENTIALS_ENABLED = employee_onepassword_active_date.strftime("%d %B %Y %H:%M")
         employee_name = employee_full_name.split()
         payload = json.dumps({
         "Personalizations": [
@@ -330,7 +337,7 @@ class MailSender():
             ],
             "dynamic_template_data": {
                 "Employee": {
-                "FirstDayOfWork": employee_STARTDATE,
+                "FirstDayOfWork": employee_start_date,
                 "OfficeCountryCode": "PL",
                 "OnePasswordUrl": onepassword_link,
                 "FirstName": employee_name[0],
@@ -378,7 +385,24 @@ class NewcomersManager():
         logger.info("Extracting all shipping data")
         equipment_data, shippment_data, self_pickup = self.newcomers.extract_df_data(self.processed_df)
         return equipment_data, shippment_data, self_pickup
-       
+      
+class SharepointMenager():
+    def __init__(self,headers, site_id, newbies_credentials_list_id, email_tracking_list_id):
+        self.sharepoint = SharepointData(headers)
+        self.site_id = site_id
+        self.newbies_credentials_list_id = newbies_credentials_list_id
+        self.email_tracking_list_id = email_tracking_list_id
+        
+    def get_newbies_credentials(self):
+        self.newbies_credentials = self.sharepoint.get_sharepoint_newbies_credentials(site_id, newbies_credentials_list_id)
+        return self.newbies_credentials
+    
+    def get_email_tracking_list(self):
+        self.email_tracking_list = self.sharepoint.get_sharepoint_email_tracker(site_id, email_tracking_list_id)
+        return self.email_tracking_list 
+    
+    
+        
 class Dhl():
     """Connect via api and create label for shipping, get track number"""
 class Jira():
@@ -426,10 +450,15 @@ def process_string(s):
 def get_mail_sender_instance():
     return MailSender()    
 
-def get_sharepoint_data(headers,site_id, newbies_credentials_list_id):
-    sharepoint_data = SharepointData(headers)
-    data = sharepoint_data.get_sharepoint_newbies_credentials(site_id, newbies_credentials_list_id)
-    return data
+def get_sharepoint_newcomers_credentials(headers, site_id, newbies_credentials_list_id,email_tracking_list_id):
+    menager = SharepointMenager(headers, site_id, newbies_credentials_list_id,email_tracking_list_id)
+    newcomers_credentials = menager.get_newbies_credentials()
+    email_tracking_list = menager.get_email_tracking_list()
+    return newcomers_credentials, email_tracking_list
+
+def get_extract_email_tracking_employee_id(data):
+    list_employee_id = [x["fields"]["EmployeeId"] for x in data["value"]]
+    return list_employee_id
 
 def get_sulu_data(application_id, headers,employee_id):
     sulu_data = SuluData(application_id, headers)
@@ -437,33 +466,35 @@ def get_sulu_data(application_id, headers,employee_id):
     return data
 
 def get_excel_sheet(drive_id, item_id, headers):
-        logger.info("func - get_excel_sheet init.")
-        newcomers = Newcomers()
-        sheet_list = newcomers.get_excel_file_from_sharepoint(drive_id, item_id, headers)
-        month_list = []
-        current_date = datetime.now()
-        current_date = datetime.strftime(current_date, "%B %Y").lower().strip()
-        sheet_uniform = []
-        for sheet in sheet_list:
-            sheet_uniform.append(sheet.lower().strip())
-        next_month = datetime.now() + relativedelta(months=1)
-        next_month = next_month.replace(day=1)
-        next_month = datetime.strftime(next_month, "%B %Y").lower().strip()
-        time_period = datetime.now() + timedelta(days=6)
-        time_period = datetime.strftime(time_period, "%B %Y").lower().strip()
-        if time_period >= next_month: 
-            month_list.append(current_date)
-            month_list.append(next_month)
-        else:
-            month_list.append(current_date)
-            
-        return month_list, sheet_uniform
-    
+    logger.info("func - get_excel_sheet init.")
+    newcomers = Newcomers()
+    sheet_list = newcomers.get_excel_file_from_sharepoint(drive_id, item_id, headers)
+    month_list = []
+    current_date = datetime.now()
+    current_date = datetime.strftime(current_date, "%B %Y").lower().strip()
+    sheet_uniform = []
+    for sheet in sheet_list:
+        sheet_uniform.append(sheet.lower().strip())
+    next_month = datetime.now() + relativedelta(months=1)
+    next_month = next_month.replace(day=1)
+    next_month = datetime.strftime(next_month, "%B %Y").lower().strip()
+    time_period = datetime.now() + timedelta(days=6)
+    time_period = datetime.strftime(time_period, "%B %Y").lower().strip()
+    if time_period >= next_month: 
+        month_list.append(current_date)
+        month_list.append(next_month)
+    else:
+        month_list.append(current_date)
+        
+    return month_list, sheet_uniform
+
 def get_newcomers_data(drive_id, item_id, headers, sheet): 
     menager = NewcomersManager(drive_id, item_id, headers, sheet)
     process_df = menager.get_excel_data()
     equipment_data, shippment_data, self_pickup = menager.extract_shipping_data()
     return process_df, equipment_data, shippment_data, self_pickup
+
+
 
 def process_employee_data(sulu_data,newcomers_excel_data, sharepoint_data, mail_sender, headers, user_id):
     employee_data_for_sharepoint_email_tracking_list = set()
@@ -552,45 +583,65 @@ def add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, header
         office_pick_up = office_pick_up[['name', 'address','phone','Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
         mail_sender.send_mail(user_id,"sebastian.fraczak@lingarogroup.com", "SELF PICKUP", office_pick_up.to_html(index=False), "2137", headers)
     mail_sender.send_mail(user_id,"sebastian.fraczak@lingarogroup.com", "EQUIPMENT DATA", equipment_data.to_html(index=False), "2137", headers)
-
-def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, headers, mail_sender, shippment_data, office_pick_up, equipment_data, user_id):
-    url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists/{email_tracking_list_id}/items?expand=fields"
-    response = requests.get(url=url, headers=headers)
-    if response.status_code != 200:
-        raise Exception(response.json())
-    result = response.json()
-    employee_details_to_add = []
+def filter_newcomers_sharepoint_record(employee_data, sharepoint_employee_id, shippment_data, equipment_data, office_pickup_data):
+    current_time = datetime.now()
+    employee_to_add = []
     for employee in employee_data:
-        current_date = datetime.now()
+        on_list = False
         employee_id = str(employee[2])
-        already_on_list = False
         start_date = datetime.strptime(employee[3], "%Y-%m-%d %H:%M:%S")
-        if start_date - timedelta(days=3) <= current_date <= start_date:  # when 3 days away from start date newcomer mail will be send.
-            for data in result["value"]:
-                fields = data["fields"]
-                list_employee_id = fields['EmployeeId']
-                if employee_id == list_employee_id:
+        if start_date - timedelta(days=20) <= current_time <= start_date:
+            for sharepoint_id in sharepoint_employee_id:
+                if employee_id == sharepoint_id:
                     shippment_data = shippment_data.drop(shippment_data[shippment_data['employeeID'].astype(str) == employee_id].index)
                     equipment_data = equipment_data.drop(equipment_data[equipment_data['employeeID'].astype(str) == employee_id].index)
-                    already_on_list = True
+                    on_list = True
                     break
-            if not already_on_list:
-                employee_details_to_add.append(employee) 
-    if employee_details_to_add:
-        add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_details_to_add, mail_sender, shippment_data, office_pick_up, equipment_data,user_id)     
+            if not on_list:
+                employee_to_add.append(employee)
+    return employee_to_add
+    
+# def check_email_tracker_list(employee_data, site_id, email_tracking_list_id, headers, mail_sender, shippment_data, office_pick_up, equipment_data, user_id):
+#     # url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/lists/{email_tracking_list_id}/items?expand=fields"
+#     # response = requests.get(url=url, headers=headers)
+#     # if response.status_code != 200:
+#     #     raise Exception(response.json())
+#     # result = response.json()
+#     employee_details_to_add = []
+#     for employee in employee_data:
+#         current_date = datetime.now()
+#         employee_id = str(employee[2])
+#         already_on_list = False
+#         start_date = datetime.strptime(employee[3], "%Y-%m-%d %H:%M:%S")
+#         if start_date - timedelta(days=20) <= current_date <= start_date:  # when 3 days away from start date newcomer mail will be send.
+#             for data in result["value"]:
+#                 fields = data["fields"]
+#                 list_employee_id = fields['EmployeeId']
+#                 logger.warning(f"employee_id - {employee_id}  ----  list_employee_id - {list_employee_id}")
+#                 if employee_id == list_employee_id:
+#                     shippment_data = shippment_data.drop(shippment_data[shippment_data['employeeID'].astype(str) == employee_id].index)
+#                     equipment_data = equipment_data.drop(equipment_data[equipment_data['employeeID'].astype(str) == employee_id].index)
+#                     already_on_list = True
+#                     break
+#             if not already_on_list:
+#                 employee_details_to_add.append(employee) 
+        # if employee_details_to_add:
+        #     add_sharepoint_email_tracking_record(site_id, email_tracking_list_id, headers, employee_details_to_add, mail_sender, shippment_data, office_pick_up, equipment_data,user_id)     
 
 def main(logger,headers, application_id, drive_id, item_id, site_id, email_tracking_list_id, newbies_credentials_list_id, user_id):
     logger.info("Main init.")
     month_sheet, excel_sheets_data = get_excel_sheet(drive_id, item_id, headers)
     mail_sender = get_mail_sender_instance()
-    sharepoint_data = get_sharepoint_data(headers, site_id, newbies_credentials_list_id)
+    newcomers_credentials, email_tracking_list = get_sharepoint_newcomers_credentials(headers, site_id, newbies_credentials_list_id, email_tracking_list_id)
+    sharepoint_employee_id = get_extract_email_tracking_employee_id(email_tracking_list)
+    print(sharepoint_employee_id)
     sulu_data = SuluData(application_id, headers)    
     for sheet in month_sheet:
         newcomers_excel_data, equipment_data, shippment_data, office_pickup_data = get_newcomers_data(drive_id, item_id, headers, sheet)
-        print(newcomers_excel_data)
-        employee_data = process_employee_data(sulu_data, newcomers_excel_data,sharepoint_data, mail_sender, headers, user_id)
-        print(employee_data)  
-        check_email_tracker_list(employee_data,site_id,email_tracking_list_id,headers, mail_sender, shippment_data, office_pickup_data, equipment_data, user_id)
+        employee_data = process_employee_data(sulu_data, newcomers_excel_data,newcomers_credentials, mail_sender, headers, user_id)
+        filtered_employees = filter_newcomers_sharepoint_record(employee_data, sharepoint_employee_id, shippment_data, equipment_data, office_pickup_data)
+        print(filtered_employees)   
+        # check_email_tracker_list(employee_data,site_id,email_tracking_list_id,headers, mail_sender, shippment_data, office_pickup_data, equipment_data, user_id)
     
 if __name__ == "__main__":
     logger = setup_logger()
