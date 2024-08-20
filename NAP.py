@@ -64,14 +64,14 @@ class SharepointData():
 
     def __init__(self, headers):
         self.headers = headers
-        
+    
     def get_sharepoint_newbies_credentials(self, site_id, newbies_credentials_list_id):
         url = f'https://graph.microsoft.com/v1.0/sites/{site_id}/lists/{newbies_credentials_list_id}/items?$expand=fields'
         response = requests.get(url, headers=self.headers)
         if response.status_code != 200:
             raise Exception(response.json())
         data = response.json()
-        # iterate over json 
+
         employee_data = []
         for item in data['value']:
             fields = item['fields']
@@ -147,7 +147,7 @@ class Newcomers():
         if response.status_code != 200:
             raise Exception(response.json())
         result = response.json()
-        formatted_address = result['result']['address']['formattedAddress']  # address after validation
+        formatted_address = result['result']['address']['formattedAddress']  
         return formatted_address
     
     def get_excel_file_from_sharepoint(self, drive_id, item_id, headers):
@@ -228,9 +228,9 @@ class Newcomers():
             if not isinstance(start_date, datetime):
                 start_date = datetime.strptime(start_date, '%d.%m.%Y')
                 logger.warning(f"Wrong start date format was found in: \n {row}")
-            if current_date <= start_date <= current_date + timedelta(days=25) and start_date.weekday() in [0, 1, 5, 6]:  
+            if current_date <= start_date <= current_date + timedelta(days=5) and start_date.weekday() in [0, 1, 5, 6]:  
                 indexes.append(int(index))  
-            elif start_date - timedelta(days=23) <= current_date <= start_date and start_date.weekday() in [2, 3, 4]: 
+            elif start_date - timedelta(days=3) <= current_date <= start_date and start_date.weekday() in [2, 3, 4]: 
                 indexes.append(int(index))
         return indexes
     
@@ -278,7 +278,7 @@ class MailSender():
                 'toRecipients': [
                     {
                         'emailAddress': {
-                            'address': address#
+                            'address': address
                         }
                     }
                 ],
@@ -438,7 +438,7 @@ def setup_logger():
         }
     }
     my_logger = logging.config.dictConfig(logging_config)
-    logger = logging.getLogger(my_logger)  # create a logger with a custom name
+    logger = logging.getLogger(my_logger) 
     return logger     
       
 def process_string(s):
@@ -496,8 +496,7 @@ def get_newcomers_data(drive_id, item_id, headers, sheet):
 
 def prepare_employee_data(sulu_data, newcomers_excel_data, sharepoint_data):
     logger.info("Starting process_employee_data.")
-    
-    # Sets to hold employee data for SharePoint email tracking and LTL employees
+
     employee_data_for_sharepoint_email_tracking_list = set()
     employes_from_ltl = set()
     
@@ -510,7 +509,6 @@ def prepare_employee_data(sulu_data, newcomers_excel_data, sharepoint_data):
         logger.info(f"Processing employee ID: {excel_employee_id}, Name: {excel_employee_name}")
         
         try:
-            # Retrieve and process Sulu data
             sulu_employee_data = sulu_data.get_sulu_data(excel_employee_id)
             sulu_employee_name = sulu_employee_data['displayName']
             logger.info(f"Retrieved Sulu data for employee ID: {excel_employee_id}, Name: {sulu_employee_name}")
@@ -518,15 +516,14 @@ def prepare_employee_data(sulu_data, newcomers_excel_data, sharepoint_data):
             if excel_employee_name == process_string(sulu_employee_name):
                 sulu_employee_ms_id = sulu_employee_data["id"]
                 
-                # Check if the employee exists in SharePoint data
                 sharepoint_entry = next((sp for sp in sharepoint_data if int(sp[0]) == excel_employee_id), None)
                 
                 if sharepoint_entry:
                     logger.info(f"Found matching SharePoint record for employee ID: {excel_employee_id}")
-                    sharepoint_url = sharepoint_entry[2]
+                    onepassword_link = sharepoint_entry[2]
                 else:
                     logger.info(f"No SharePoint record found for employee ID: {excel_employee_id}. Adding a default record.")
-                    sharepoint_url = "https://share.1password.com/s#rcAv4wgslR3cUc--7JFCR935dD-veFGcrF7pXpxoRXc"
+                    onepassword_link = "https://share.1password.com/s#ASz7Tdy5k5aHrNjBErHSltiy8VKcS8bSr9Udcc-Hcug"
                     employes_from_ltl.add((
                         excel_employee_id,
                         sulu_employee_ms_id,
@@ -534,88 +531,22 @@ def prepare_employee_data(sulu_data, newcomers_excel_data, sharepoint_data):
                         excel_employee_start_date
                     ))
                 
-                # Add employee data to tracking list
                 employee_data_for_sharepoint_email_tracking_list.add((
                     sulu_employee_ms_id,
                     sulu_employee_name,
                     excel_employee_id,
                     excel_employee_start_date,
                     excel_employee_personal_mail,
-                    sharepoint_url,
+                    onepassword_link,
                 ))
                 
         except AttributeError as e:
             logger.error(f"AttributeError processing employee ID: {excel_employee_id}, Error: {e}")
     
-    # Create a DataFrame if there are LTL employees
     df = pd.DataFrame(employes_from_ltl, columns=['Employee id', 'Microsoft id', 'Name', 'Start date']) if employes_from_ltl else None
     
     logger.info(f"Finished processing employees. Total employees for SharePoint tracking: {len(employee_data_for_sharepoint_email_tracking_list)}")
     return employee_data_for_sharepoint_email_tracking_list, df
-
-
-# def prepare_employee_data(sulu_data, newcomers_excel_data, sharepoint_data):
-#     logger.info("Starting process_employee_data.")
-#     employee_data_for_sharepoint_email_tracking_list = set()
-#     employes_from_ltl = set()
-    
-#     for index, row in newcomers_excel_data.iterrows():
-#         excel_employee_id = row["employeeID"]
-#         excel_employee_name = row["name"]
-#         excel_employee_start_date = row["start date"]
-        
-#         logger.info(f"Processing employee ID: {excel_employee_id}, Name: {excel_employee_name}")
-        
-#         try:
-#             sulu_employee_data = sulu_data.get_sulu_data(excel_employee_id)
-#             sulu_employee_name = sulu_employee_data['displayName']
-#             logger.info(f"Retrieved Sulu data for employee ID: {excel_employee_id}, Name: {sulu_employee_name}")
-            
-#             if excel_employee_name == process_string(sulu_employee_name):
-#                 sulu_employee_id = sulu_employee_data["id"]
-#                 excel_employee_start_date = str(row["start date"])
-#                 excel_employee_personal_mail = row["e-mail before start"]
-#                 sharepoint_found = False
-                
-#                 for sharepoint in sharepoint_data:
-#                     if int(sharepoint[0]) == excel_employee_id:
-#                         logger.info(f"Found matching SharePoint record for employee ID: {excel_employee_id}")
-#                         employee_data_for_sharepoint_email_tracking_list.add((
-#                             sulu_employee_id,
-#                             sulu_employee_name,
-#                             excel_employee_id,
-#                             excel_employee_start_date,
-#                             excel_employee_personal_mail,
-#                             sharepoint[2],
-#                         ))
-#                         sharepoint_found = True
-#                         break
-                
-#                 if not sharepoint_found:
-#                     logger.info(f"No SharePoint record found for employee ID: {excel_employee_id}. Adding a default record.")
-#                     employee_data_for_sharepoint_email_tracking_list.add((
-#                         sulu_employee_id,
-#                         sulu_employee_name,
-#                         excel_employee_id,
-#                         excel_employee_start_date,
-#                         excel_employee_personal_mail,
-#                         "https://share.1password.com/s#rcAv4wgslR3cUc--7JFCR935dD-veFGcrF7pXpxoRXc"
-#                     ))
-#                     employes_from_ltl.add((
-#                         excel_employee_id,
-#                         sulu_employee_id,
-#                         sulu_employee_name,
-#                         excel_employee_start_date
-#                     ))
- 
-#         except AttributeError as e:
-#             logger.error(f"AttributeError processing employee ID: {excel_employee_id}, Error: {e}")
-    
-#     if employes_from_ltl:
-#         df = pd.DataFrame(employes_from_ltl, columns=['Employee id', 'Microsoft id', 'Name', 'Start date'])
-    
-#     logger.info(f"Finished processing employees. Total employees for SharePoint tracking: {len(employee_data_for_sharepoint_email_tracking_list)}")
-#     return employee_data_for_sharepoint_email_tracking_list, df
 
 
 def add_email_tracking_record_to_sharepoint(site_id, email_tracking_list_id, headers, employee_data):
@@ -658,9 +589,8 @@ def send_welcome_emails(employee_data, mail_sender):
     for data in employee_data:
         employee_name = data[1]
         employee_personal_mail = data[4]
-        employee_start_date = data[3]
         employee_one_password = data[5]
-        start_date = datetime.strptime(employee_start_date, "%Y-%m-%d %H:%M:%S")
+        start_date = datetime.strptime(data[3], "%Y-%m-%d %H:%M:%S")
         
         logger.info(f"Sending welcome email to employee: {employee_name}")
         mail_sender.send_welcome_mail_to_newcomer(employee_name, start_date, employee_one_password, employee_personal_mail)
@@ -708,7 +638,8 @@ def filter_newcomer_records_for_sharepoint(employee_data, sharepoint_employee_id
     return employee_to_add
 
 
-def prepare_newcomer_shipping_data(employee_data, shippment_data, equipment_data, office_pickup_data):
+
+def prepare_newcomer_shipping_data(employee_data, sharepoint_data, shippment_data, equipment_data, office_pickup_data):
     logger.info("Starting process_newcomers_shipping_data.")
     
     if not employee_data:
@@ -716,12 +647,18 @@ def prepare_newcomer_shipping_data(employee_data, shippment_data, equipment_data
         sys.exit(1)
     
     logger.info("Cleaning up shipment and equipment data.")
-    shippment_data = shippment_data.drop(shippment_data[shippment_data['employeeID'].astype(str) == employee_data[2]].index)
-    equipment_data = equipment_data.drop(equipment_data[equipment_data['employeeID'].astype(str) == employee_data[2]].index)
+    logger.warning(shippment_data.head())
+    matches = filter( lambda x: any(x[2] == y for y in sharepoint_data), employee_data)
+    matches_list = list(matches)
+    logger.warning(matches_list)
+    if matches_list:
+        shippment_data = shippment_data.drop(shippment_data[shippment_data['employeeID'] == employee_data[2]].index)
+        equipment_data = equipment_data.drop(equipment_data[equipment_data['employeeID'] == employee_data[2]].index)
     
     shippment_data = shippment_data[['name', 'address', 'phone']]
     equipment_data = equipment_data[['name', 'start date', 'laptop', 'telefon sluzbowy', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
-    office_pickup_data = office_pickup_data[['name', 'address', 'phone', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
+    if office_pickup_data != None:
+        office_pickup_data = office_pickup_data[['name', 'address', 'phone', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
     
     logger.info("Finished processing shipping and equipment data.")
     return equipment_data, shippment_data, office_pickup_data
@@ -748,7 +685,7 @@ def main(logger, headers, application_id, drive_id, item_id, site_id, email_trac
         
         logger.info(f"Filtered employees: {len(filtered_employees)}")
         
-        equipment_clean, shippment_clean, office_pickup_clean = prepare_newcomer_shipping_data(filtered_employees, shippment_data, equipment_data, office_pickup_data)
+        equipment_clean, shippment_clean, office_pickup_clean = prepare_newcomer_shipping_data(filtered_employees,sharepoint_employee_id ,shippment_data, equipment_data, office_pickup_data)
         add_email_tracking_record_to_sharepoint(site_id, email_tracking_list_id, headers, filtered_employees)
         send_welcome_emails(filtered_employees, mail_sender)
         send_logistics_emails(mail_sender,shippment_clean,equipment_clean,office_pickup_clean,ltl_data, user_id)
