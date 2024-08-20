@@ -15,6 +15,7 @@ from dateutil.relativedelta import relativedelta
 import logging
 import colorlog
 import sys
+from jira import JIRA
 
 
 class MsGraph:
@@ -59,6 +60,30 @@ async def get_user(tenant_id, client_id, client_secret, user_id):
 
 async def msgraph_main(tenant_id, client_id, client_secret, user_id):
     await get_user(tenant_id, client_id, client_secret, user_id)
+  
+class JiraAutomations():
+    def __init__(self, username, api_token):
+        self.username = username
+        self.api_token = api_token
+        
+        
+    def authenticate(self):
+        jira_options = {'server': 'https://lingaro.atlassian.net'}        
+        self.jira = JIRA(options=jira_options, basic_auth=(self.username, self.api_token))
+        return self.jira
+    
+    def list_all_new_pewson_tickets(self,jira):
+        if jira is None:
+            raise ValueError("error")
+        jql_query = f'status in ("New", "On Hold") AND summary !~ "Remote in Mexico" AND summary ~ " new person"'
+        issues = jira.search_issues(jql_query)
+        new_person_issues = [(issue.key, unidecode(issue.fields.summary).strip().lower()) for issue in issues]
+        return new_person_issues
+
+    def create_jointer_subtasks(self,jira,issue_id):
+        if issue_id is None:
+            "error"
+        issue = jira.issue(issue_id) 
     
 class SharepointData():
 
@@ -478,7 +503,7 @@ def get_excel_sheet(drive_id, item_id, headers):
     next_month = datetime.now() + relativedelta(months=1)
     next_month = next_month.replace(day=1)
     next_month = datetime.strftime(next_month, "%B %Y").lower().strip()
-    time_period = datetime.now() + timedelta(days=6)
+    time_period = datetime.now() + timedelta(days=5)
     time_period = datetime.strftime(time_period, "%B %Y").lower().strip()
     if time_period >= next_month: 
         month_list.append(current_date)
@@ -559,7 +584,7 @@ def add_email_tracking_record_to_sharepoint(site_id, email_tracking_list_id, hea
         employee_id = str(data[2])
         employee_start_date = data[3]  # format = '2024-07-22 00:00:00'        
         start_date = datetime.strptime(employee_start_date, "%Y-%m-%d %H:%M:%S")
-        end_date = (start_date + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S")
+        end_date = (start_date + timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%S")
         
         payload = {
             "fields": {
@@ -669,7 +694,6 @@ def main(logger, headers, application_id, drive_id, item_id, site_id, email_trac
     logger.info("Main function init.")
     
     month_sheet, excel_sheets_data = get_excel_sheet(drive_id, item_id, headers)
-    logger.warning(month_sheet)
     mail_sender = get_mail_sender_instance()
     newcomers_credentials, email_tracking_list = get_sharepoint_newcomers_credentials(headers, site_id, newbies_credentials_list_id, email_tracking_list_id)
     sharepoint_employee_id = get_extract_email_tracking_employee_id(email_tracking_list)
@@ -689,8 +713,8 @@ def main(logger, headers, application_id, drive_id, item_id, site_id, email_trac
         
         equipment_clean, shippment_clean, office_pickup_clean = prepare_newcomer_shipping_data(filtered_employees,sharepoint_employee_id ,shippment_data, equipment_data, office_pickup_data)
         add_email_tracking_record_to_sharepoint(site_id, email_tracking_list_id, headers, filtered_employees)
-        # send_welcome_emails(filtered_employees, mail_sender)
-        # send_logistics_emails(mail_sender,shippment_clean,equipment_clean,office_pickup_clean,ltl_data, user_id)
+        send_welcome_emails(filtered_employees, mail_sender)
+        send_logistics_emails(mail_sender,shippment_clean,equipment_clean,office_pickup_clean,ltl_data, user_id)
     
     logger.info("Main function completed.")
     
