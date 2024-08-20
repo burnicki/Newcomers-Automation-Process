@@ -598,18 +598,20 @@ def send_welcome_emails(employee_data, mail_sender):
 def send_logistics_emails(mail_sender, shipment_data, equipment_data, office_pickup_data,ltl_data, user_id):
     content = f"Hi,<br>Please order a courier and prepare a delivery note for:<br>{shipment_data.to_html(index=False)}<br> Automatically generated email, addresse's was validated using google address validate API."
     logger.info("Sending courier order email.")
-    mail_sender.send_mail(user_id, "offce@lingarogroup.com", "Ordering a shipment courier", content, "2137", headers)
+    mail_sender.send_mail(user_id, "office@lingarogroup.com", "Ordering a shipment courier", content, "2137", headers)
+    
+    logger.info("Sending equipment data email.")
+    mail_sender.send_mail(user_id, "sebastian.fraczak@lingarogroup.com", "EQUIPMENT DATA", equipment_data.to_html(index=False), "2137", headers)
     
     if office_pickup_data:
         logger.info("Sending self pickup email.")
         mail_sender.send_mail(user_id, "sebastian.fraczak@lingarogroup.com", "SELF PICKUP", office_pickup_data.to_html(index=False), "2137", headers)
-        
-    logger.info("Sending equipment data email.")
-    mail_sender.send_mail(user_id, "sebastian.fraczak@lingarogroup.com", "EQUIPMENT DATA", equipment_data.to_html(index=False), "2137", headers)
+    if ltl_data:
+        content_ltl = f"Employee password must be reset to - L1n99aROrba22 <br> {ltl_data.to_html(index=False)}"
+        logger.info(f"Sending email for long term leavers with {len(ltl_data)} employees.")
+        mail_sender.send_mail(user_id, "dominik.boras@lingarogroup.com", "Long Term Leavers", content_ltl, "2137", headers)
+         
     
-    content_ltl = f"Employee password must be reset to - L1n99aROrba22 <br> {ltl_data.to_html(index=False)}"
-    logger.info(f"Sending email for long term leavers with {len(ltl_data)} employees.")
-    mail_sender.send_mail(user_id, "dominik.boras@lingarogroup.com", "Long Term Leavers", content_ltl, "2137", headers)
 
 
 def filter_newcomer_records_for_sharepoint(employee_data, sharepoint_employee_id):
@@ -643,17 +645,16 @@ def prepare_newcomer_shipping_data(employee_data, sharepoint_data, shippment_dat
     logger.info("Starting process_newcomers_shipping_data.")
     
     if not employee_data:
-        logger.debug("Empty list of employee data.")
-        sys.exit(1)
+        logger.warning("Empty list of employee data.")
+
     
     logger.info("Cleaning up shipment and equipment data.")
-    logger.warning(shippment_data.head())
-    matches = filter( lambda x: any(x[2] == y for y in sharepoint_data), employee_data)
-    matches_list = list(matches)
-    logger.warning(matches_list)
-    if matches_list:
-        shippment_data = shippment_data.drop(shippment_data[shippment_data['employeeID'] == employee_data[2]].index)
-        equipment_data = equipment_data.drop(equipment_data[equipment_data['employeeID'] == employee_data[2]].index)
+ 
+    maching_ids = [x[2] for x in employee_data if x[2] in sharepoint_data]
+    logger.warning(f"Employee already on sharepoint : {maching_ids}")   
+    if maching_ids:
+        shippment_data = shippment_data[~shippment_data['employeeID'].isin(maching_ids)]
+        equipment_data = equipment_data[~equipment_data['employeeID'].isin(maching_ids)]
     
     shippment_data = shippment_data[['name', 'address', 'phone']]
     equipment_data = equipment_data[['name', 'start date', 'laptop', 'telefon sluzbowy', 'Dodatkowe( wczesniejsza wysylka lub odbiór osobisty)']]
@@ -668,6 +669,7 @@ def main(logger, headers, application_id, drive_id, item_id, site_id, email_trac
     logger.info("Main function init.")
     
     month_sheet, excel_sheets_data = get_excel_sheet(drive_id, item_id, headers)
+    logger.warning(month_sheet)
     mail_sender = get_mail_sender_instance()
     newcomers_credentials, email_tracking_list = get_sharepoint_newcomers_credentials(headers, site_id, newbies_credentials_list_id, email_tracking_list_id)
     sharepoint_employee_id = get_extract_email_tracking_employee_id(email_tracking_list)
@@ -687,8 +689,8 @@ def main(logger, headers, application_id, drive_id, item_id, site_id, email_trac
         
         equipment_clean, shippment_clean, office_pickup_clean = prepare_newcomer_shipping_data(filtered_employees,sharepoint_employee_id ,shippment_data, equipment_data, office_pickup_data)
         add_email_tracking_record_to_sharepoint(site_id, email_tracking_list_id, headers, filtered_employees)
-        send_welcome_emails(filtered_employees, mail_sender)
-        send_logistics_emails(mail_sender,shippment_clean,equipment_clean,office_pickup_clean,ltl_data, user_id)
+        # send_welcome_emails(filtered_employees, mail_sender)
+        # send_logistics_emails(mail_sender,shippment_clean,equipment_clean,office_pickup_clean,ltl_data, user_id)
     
     logger.info("Main function completed.")
     
