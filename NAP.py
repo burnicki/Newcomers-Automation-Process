@@ -66,13 +66,12 @@ class JiraAutomations():
         self.username = username
         self.api_token = api_token
         
-        
     def authenticate(self):
         jira_options = {'server': 'https://lingaro.atlassian.net'}        
         self.jira = JIRA(options=jira_options, basic_auth=(self.username, self.api_token))
         return self.jira
     
-    def list_all_new_pewson_tickets(self,jira):
+    def get_new_pewson_issues(self,jira):
         if jira is None:
             raise ValueError("error")
         jql_query = f'status in ("New", "On Hold") AND summary !~ "Remote in Mexico" AND summary ~ " new person"'
@@ -80,7 +79,7 @@ class JiraAutomations():
         new_person_issues = [(issue.key, unidecode(issue.fields.summary).strip().lower()) for issue in issues]
         return new_person_issues
 
-    def create_jointer_subtasks(self,jira,issue_id):
+    def create_new_peraon_subtasks(self,jira,issue_id):
         if issue_id is None:
             "error"
         issue = jira.issue(issue_id) 
