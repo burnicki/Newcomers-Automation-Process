@@ -697,6 +697,7 @@ def main(logger, headers, application_id, drive_id, item_id, site_id, email_trac
 if __name__ == "__main__":
     logger = setup_logger()
     load_dotenv("/Users/maciejcichocki/Documents/GitHub/newcomers_process_automation/Newcomers-Automation-Process/token.env")
+   # CR - Please, create 'NewComersAutConfiguation class' and move line 701-710 to them
     drive_id = os.getenv("DRIVE_ID")    #Sharepoint Data
     item_id = os.getenv("ITEM_ID")    #Sharepoint Data
     tenant_id = os.getenv("PYTHON_TENANT_ID")    # AZURE APP ID'S
